@@ -6,6 +6,7 @@ mod activity;
 mod context;
 mod handlers;
 mod notifications;
+mod rename;
 
 use context::sync_pane_location;
 use notifications::notification_settings;

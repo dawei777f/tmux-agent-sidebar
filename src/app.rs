@@ -106,8 +106,9 @@ pub fn run(
             needs_redraw = true;
         }
 
-        if let Ok(names) = session_rx.try_recv() {
-            state.sessions.names = names;
+        if let Ok(update) = session_rx.try_recv() {
+            state.sessions.names = update.claude;
+            state.sessions.generated = update.generated;
             state.sessions.dirty = true;
             needs_redraw = true;
         }

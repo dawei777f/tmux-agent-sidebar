@@ -165,19 +165,26 @@ impl AppState {
         window_active
     }
 
-    /// Apply the current `session_id → name` map to each pane so the
-    /// sidebar can render `/rename`-assigned labels. The map itself is
-    /// refreshed off-thread by `session_poll_loop` in `main.rs`; this
-    /// function only consumes the cached snapshot.
+    /// Apply the current `session_id → name` maps to each pane so the
+    /// sidebar can render the most specific label available.
+    ///
+    /// Precedence: a user-set Claude `/rename` (`sessions.names`) beats
+    /// the local-LLM generated fallback (`sessions.generated`). If
+    /// neither map has an entry the label is cleared. Both maps are
+    /// refreshed off-thread by `session_poll_loop`; this function only
+    /// consumes the cached snapshots.
     fn refresh_session_names(&mut self) {
         for group in &mut self.repo_groups {
             for (pane, _) in &mut group.panes {
-                if let Some(sid) = &pane.session_id
-                    && let Some(name) = self.sessions.names.get(sid)
-                {
-                    pane.session_name.clone_from(name);
-                } else {
-                    pane.session_name.clear();
+                let resolved = pane.session_id.as_deref().and_then(|sid| {
+                    self.sessions
+                        .names
+                        .get(sid)
+                        .or_else(|| self.sessions.generated.get(sid))
+                });
+                match resolved {
+                    Some(name) => pane.session_name.clone_from(name),
+                    None => pane.session_name.clear(),
                 }
             }
         }
@@ -531,6 +538,39 @@ mod tests {
         assert!(
             state.repo_groups[0].panes[0].0.session_name.is_empty(),
             "pane without session_id must end up with an empty session_name"
+        );
+    }
+
+    #[test]
+    fn refresh_session_names_falls_back_to_generated_when_claude_name_absent() {
+        let mut state = state_with_panes(vec![pane_with_session("%1", "sess-a")]);
+        state
+            .sessions
+            .generated
+            .insert("sess-a".into(), "refactor".into());
+
+        state.refresh_session_names();
+
+        assert_eq!(
+            state.repo_groups[0].panes[0].0.session_name, "refactor",
+            "generated name must be used when Claude name is absent"
+        );
+    }
+
+    #[test]
+    fn refresh_session_names_claude_name_wins_over_generated() {
+        let mut state = state_with_panes(vec![pane_with_session("%1", "sess-a")]);
+        state.sessions.names.insert("sess-a".into(), "alpha".into());
+        state
+            .sessions
+            .generated
+            .insert("sess-a".into(), "refactor".into());
+
+        state.refresh_session_names();
+
+        assert_eq!(
+            state.repo_groups[0].panes[0].0.session_name, "alpha",
+            "user-set Claude name must beat LLM-generated fallback"
         );
     }
 }

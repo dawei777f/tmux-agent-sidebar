@@ -5,16 +5,27 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
 use crate::git::{self, GitData};
+use crate::llm;
 use crate::session;
 use crate::state::{AppState, BottomTab};
 use crate::tmux;
 use crate::version::{self, UpdateNotice};
 
+/// Snapshot of session-name sources polled every 10 s. `claude` comes
+/// from `~/.claude/sessions/*.json` (authoritative); `generated` is the
+/// local-LLM rename fallback persisted on disk by the `rename-session`
+/// subcommand.
+#[derive(Debug, Clone, Default)]
+pub(super) struct SessionNameUpdate {
+    pub claude: HashMap<String, String>,
+    pub generated: HashMap<String, String>,
+}
+
 /// Channels and shared flags produced by [`spawn`] that the main event loop
 /// drains every tick.
 pub(super) struct Workers {
     pub git_rx: Receiver<GitData>,
-    pub session_rx: Receiver<HashMap<String, String>>,
+    pub session_rx: Receiver<SessionNameUpdate>,
     pub version_rx: Receiver<UpdateNotice>,
     pub git_tab_active: Arc<AtomicBool>,
 }
@@ -23,7 +34,7 @@ pub(super) struct Workers {
 /// notice fetch) that feed the event loop.
 pub(super) fn spawn(state: &AppState) -> Workers {
     let (git_tx, git_rx) = mpsc::channel::<GitData>();
-    let (session_tx, session_rx) = mpsc::channel::<HashMap<String, String>>();
+    let (session_tx, session_rx) = mpsc::channel::<SessionNameUpdate>();
     let (version_tx, version_rx) = mpsc::channel::<UpdateNotice>();
     let tmux_pane_clone = state.tmux_pane.clone();
     let git_tab_active = Arc::new(AtomicBool::new(state.bottom_tab == BottomTab::GitStatus));
@@ -48,14 +59,17 @@ pub(super) fn spawn(state: &AppState) -> Workers {
     }
 }
 
-/// Session name polling thread. Scans `~/.claude/sessions/*.json` every 10
-/// seconds so the main TUI thread never performs blocking filesystem I/O
-/// to refresh `/rename`-assigned labels.
-pub(super) fn session_poll_loop(tx: &mpsc::Sender<HashMap<String, String>>) {
+/// Session name polling thread. Scans `~/.claude/sessions/*.json` and
+/// the LLM-generated name store every 10 seconds so the main TUI thread
+/// never performs blocking filesystem I/O to refresh session labels.
+pub(super) fn session_poll_loop(tx: &mpsc::Sender<SessionNameUpdate>) {
     loop {
         std::thread::sleep(Duration::from_secs(10));
-        let names = session::scan_session_names();
-        if tx.send(names).is_err() {
+        let update = SessionNameUpdate {
+            claude: session::scan_session_names(),
+            generated: llm::store::scan_all(),
+        };
+        if tx.send(update).is_err() {
             return;
         }
     }

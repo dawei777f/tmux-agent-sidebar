@@ -346,6 +346,39 @@ impl AppState {
         };
     }
 
+    /// Spawn `tmux-agent-sidebar rename-session` for the focused pane's
+    /// session, forcing regeneration (no `--auto`). Fire-and-forget —
+    /// the 10 s session-name poll picks up the new name once the LLM
+    /// subprocess writes it to disk.
+    pub fn trigger_llm_rename(&mut self) {
+        let Some(pane) = self.selected_pane() else {
+            self.set_flash("rename: no pane selected");
+            return;
+        };
+        let Some(session_id) = pane.session_id.clone().filter(|s| !s.is_empty()) else {
+            self.set_flash("rename: pane has no session id yet");
+            return;
+        };
+        let pane_id = pane.pane_id.clone();
+        let Ok(exe) = std::env::current_exe() else {
+            self.set_flash("rename: could not resolve exe");
+            return;
+        };
+        let result = std::process::Command::new(exe)
+            .arg("rename-session")
+            .arg("--session")
+            .arg(&session_id)
+            .arg("--pane")
+            .arg(&pane_id)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        match result {
+            Ok(_) => self.set_flash("rename: generating…"),
+            Err(e) => self.set_flash(format!("rename: spawn failed: {e}")),
+        }
+    }
+
     pub fn open_spawn_input_from_selection(&mut self) {
         let Some(pane) = self.selected_pane() else {
             self.set_flash("spawn: no pane selected");

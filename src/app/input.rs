@@ -145,6 +145,11 @@ pub(super) fn handle_event(
                         state.open_remove_confirm();
                     }
                 }
+                KeyCode::Char('R') => {
+                    if state.focus_state.focus == Focus::Panes {
+                        state.trigger_llm_rename();
+                    }
+                }
                 KeyCode::Enter => {
                     if state.focus_state.focus == Focus::Panes {
                         state.activate_selected_pane();
