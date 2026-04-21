@@ -7,6 +7,7 @@ pub mod desktop_notification;
 pub mod event;
 pub mod git;
 pub mod group;
+pub mod llm;
 pub mod port;
 pub mod session;
 pub mod state;
