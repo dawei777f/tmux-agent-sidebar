@@ -14,6 +14,7 @@ description: Every shortcut in the sidebar, the worktree spawn modal, and the cl
 | `h` / `Left`   | Previous status filter                                        |
 | `l` / `Right`  | Next status filter                                            |
 | `r`            | Open repo filter popup                                        |
+| `Shift+R`      | Regenerate session title for the focused row via local LLM    |
 | `Enter`        | Jump to the selected pane                                     |
 | `Tab`          | Cycle status filter                                           |
 | `Shift+Tab`    | Switch bottom panel tab (Activity ⇄ Git)                      |
