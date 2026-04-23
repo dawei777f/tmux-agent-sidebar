@@ -166,8 +166,9 @@ build_layout() {
         started_s=45
     run_fake_agent "$PANE_WAITING" codex
 
-    # Background — OpenCode has a long-running dev server (12 m 45 s).
-    # Shows the `◎` icon + surfaced bg command in the row body.
+    # Background — OpenCode has a long-running dev server (12 m 45 s)
+    # listening on :3456. Shows the `◎` icon, the port label next to
+    # the branch, and the surfaced bg command in the row body.
     export PANE_BACKGROUND="${extras[1]}"
     _seed_pane "$PANE_BACKGROUND" \
         agent=opencode status=background \
@@ -175,20 +176,20 @@ build_layout() {
         prompt="boot the dev server while I review the router split" \
         bg_cmd="npm run dev" \
         started_s=765
-    run_fake_agent "$PANE_BACKGROUND" opencode "" "npm run dev"
+    run_fake_agent "$PANE_BACKGROUND" opencode 3456 "npm run dev"
 
     # Error pane — cause surfaced via @pane_wait_reason (matches the hook
-    # convention in src/cli/hook/handlers.rs). Listens on :3456 — the
-    # local preview that was already up when the agent hit the rate limit.
-    # _seed_pane skips @pane_started_at on error so the elapsed counter
-    # stays empty; the failure reason matters, not how old the error is.
+    # convention in src/cli/hook/handlers.rs). No port: the API call was
+    # rejected before the agent could bind anything. _seed_pane skips
+    # @pane_started_at on error so the elapsed counter stays empty; the
+    # failure reason matters, not how old the error is.
     export PANE_ERROR="${extras[2]}"
     _seed_pane "$PANE_ERROR" \
         agent=claude status=error \
         branch=feat/dashboard-charts \
         prompt="add Recharts integration to the metrics panel" \
         wait_reason="anthropic api: rate limit reached"
-    run_fake_agent "$PANE_ERROR" claude 3456
+    run_fake_agent "$PANE_ERROR" claude
 
     # Default focus = MAIN_PANE. Scenarios override via FOCUS.
     # `${!var}` indirection under `set -u` fails hard if FOCUS points at
