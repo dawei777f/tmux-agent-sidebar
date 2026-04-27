@@ -57,6 +57,9 @@ render_static agent-pane-focus
 render_static activity-focus
 render_static git-focus
 render_static worktree-spawn
+render_static mascot-idle
+render_static mascot-walking
+render_static mascot-working
 
 echo
 echo "==> done: $OUT"

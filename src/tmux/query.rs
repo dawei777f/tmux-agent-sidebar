@@ -616,6 +616,17 @@ mod tests {
     }
 
     #[test]
+    fn apply_codex_permission_modes_matches_path_comm() {
+        let mut panes = vec![test_pane_codex("%1")];
+        let pids = vec![(0, 101)];
+        let ps_out = "101 1 /bin/zsh /bin/zsh\n102 101 /opt/homebrew/bin/codex /opt/homebrew/bin/codex --full-auto\n";
+        let snapshot = ProcessSnapshot::from_ps_output(ps_out);
+
+        apply_codex_permission_modes(&mut panes, &pids, &snapshot);
+        assert_eq!(panes[0].permission_mode, PermissionMode::Auto);
+    }
+
+    #[test]
     fn parse_ps_processes_preserves_spaced_args() {
         let snapshot = ProcessSnapshot::from_ps_output(
             "100 1 codex /Applications/Codex App/bin/codex --full-auto\n101 100 sh sh -c wrapper\n",

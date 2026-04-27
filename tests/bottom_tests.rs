@@ -1525,3 +1525,36 @@ fn snapshot_focused_group_active_border_styled() {
     ╰[fg:240]─[fg:240]─[fg:240]─[fg:240]─[fg:240]─[fg:240]─[fg:240]─[fg:240]─[fg:240]─[fg:240]─[fg:240]─[fg:240]─[fg:240]─[fg:240]─[fg:240]─[fg:240]─[fg:240]─[fg:240]─[fg:240]─[fg:240]─[fg:240]─[fg:240]─[fg:240]─[fg:240]─[fg:240]─[fg:240]─[fg:240]╯[fg:240]
     ");
 }
+
+#[test]
+fn test_mascot_enabled_preserves_bottom_panel_border() {
+    let pane = make_pane(AgentType::Claude, PaneStatus::Idle);
+    let mut state = make_state(vec![SessionInfo {
+        session_name: "main".into(),
+        windows: vec![WindowInfo {
+            window_id: "@1".into(),
+            window_name: "project".into(),
+            window_active: true,
+            auto_rename: false,
+            panes: vec![pane.clone()],
+        }],
+    }]);
+    state.repo_groups = vec![make_repo_group("project", vec![pane])];
+    state.rebuild_row_targets();
+    state.focus_state.sidebar_focused = false;
+    state.mascot_enabled = true;
+
+    insta::assert_snapshot!(render_to_string(&mut state, 40, 30), @r"
+     ≡1  ●0  ◎0  ◐0  ○1  ✕0
+    ⓘ                                    — ▾
+    project
+    ┃ ○ claude
+        Waiting for prompt…
+      ▄ ▄
+     ▄▀▀▀▄                             ████
+      ▀ ▀                           ██ █  █
+    ╭ Activity │ Git ──────────────────────╮
+    │            No activity yet           │
+    ╰──────────────────────────────────────╯
+    ");
+}

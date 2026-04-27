@@ -22,6 +22,8 @@ pub struct ColorTheme {
     pub agent_claude: Color,
     pub agent_codex: Color,
     pub agent_opencode: Color,
+    pub mascot_body: Color,
+    pub mascot_eye: Color,
     pub text_active: Color,
     pub text_muted: Color,
     pub text_inactive: Color,
@@ -60,6 +62,8 @@ impl Default for ColorTheme {
             agent_claude: Color::Indexed(174),
             agent_codex: Color::Indexed(141),
             agent_opencode: Color::Indexed(117),
+            mascot_body: Color::Indexed(208),
+            mascot_eye: Color::Indexed(114),
             text_active: Color::Indexed(255),
             text_muted: Color::Indexed(252),
             text_inactive: Color::Indexed(244),
@@ -112,6 +116,8 @@ impl ColorTheme {
         theme.agent_claude = read(tmux::SIDEBAR_COLOR_AGENT_CLAUDE, theme.agent_claude);
         theme.agent_codex = read(tmux::SIDEBAR_COLOR_AGENT_CODEX, theme.agent_codex);
         theme.agent_opencode = read(tmux::SIDEBAR_COLOR_AGENT_OPENCODE, theme.agent_opencode);
+        theme.mascot_body = read(tmux::SIDEBAR_COLOR_MASCOT_BODY, theme.mascot_body);
+        theme.mascot_eye = read(tmux::SIDEBAR_COLOR_MASCOT_EYE, theme.mascot_eye);
         theme.text_active = read(tmux::SIDEBAR_COLOR_TEXT_ACTIVE, theme.text_active);
         theme.text_muted = read(tmux::SIDEBAR_COLOR_TEXT_MUTED, theme.text_muted);
         theme.text_inactive = read(tmux::SIDEBAR_COLOR_TEXT_INACTIVE, theme.text_inactive);
@@ -216,5 +222,12 @@ mod tests {
         assert_eq!(theme.agent_color(&AgentType::Codex), Color::Indexed(141));
         assert_eq!(theme.agent_color(&AgentType::OpenCode), Color::Indexed(117));
         assert_eq!(theme.agent_color(&AgentType::Unknown), theme.status_unknown);
+    }
+
+    #[test]
+    fn mascot_color_defaults_match_current_palette() {
+        let theme = ColorTheme::default();
+        assert_eq!(theme.mascot_body, Color::Indexed(208));
+        assert_eq!(theme.mascot_eye, Color::Indexed(114));
     }
 }

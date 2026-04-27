@@ -89,9 +89,14 @@ Per-pane file-based state:
 | `theme` | Once at startup | Color theme from tmux `@sidebar_color_*` variables |
 | `popup` | On user input / render | `PopupState` enum: `None` / `Repo { selected, area }` / `Notices { area }`. Enforces "at most one popup open" via the type system |
 | `layout` | Every frame (render) | `FrameLayout` sub-struct bundling the ephemeral fields the UI rewrites every frame for click hit-testing: `pane_row_targets`, `line_to_row`, `repo_button_col`, `repo_spawn_targets`, `spawn_remove_targets`, `hyperlink_overlays` |
-| `notices` | Once at startup / on copy | `NoticesState` sub-struct: `button_col`, `missing_hook_groups`, `claude_plugin_installed_version`, `claude_settings_has_residual_hooks`, `claude_plugin_notice`, `copy_targets`, `copied_at` |
+| `notices` | Once at startup / on copy | `NoticesState` sub-struct: `button_col`, `missing_hook_groups`, `claude_plugin_status`, `claude_settings_has_residual_hooks`, `claude_plugin_notice`, `copy_targets`, `copied_at` |
 | `timers` | Refresh cycle / on user input | `RefreshTimers` sub-struct gating periodic work: `last_filter_click` (debounce), `last_port_refresh`, `port_scan_initialized` |
 | `pending_osc52_copy` | On successful copy / frame flush | OSC 52 clipboard payload queued for terminal forwarding |
+| `mascot_state` | Every 200ms (animation) | `Idle` / `WalkRight` / `Working` / `WalkLeft` |
+| `mascot_x` | Every 200ms (animation) | Mascot X position |
+| `mascot_frame` | Every 200ms (animation) | Animation frame counter |
+| `mascot_bob_timer` | Every 200ms (animation) | Idle bob motion timer |
+| `mascot_enabled` | Once at startup | Whether the mascot is drawn and ticked (from `@sidebar_mascot`) |
 | `spinner_frame` | Every 200ms (animation) | Spinner animation frame counter |
 | `icons` | Once at startup | `StatusIcons` theme (overridable via tmux options) |
 | `tmux_pane` | Once at startup | This sidebar's own tmux pane ID |
@@ -107,7 +112,7 @@ Per-pane file-based state:
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  Every frame (~200ms)                                       │
-│  layout.* (rebuilt by ui::draw), spinner animation          │
+│  layout.* (rebuilt by ui::draw), spinner + mascot animation │
 ├─────────────────────────────────────────────────────────────┤
 │  Every 1s (refresh cycle)                                   │
 │  repo_groups, focus_state.focused_pane_id,                  │
@@ -196,6 +201,25 @@ enum PopupState {
     None,
     Repo { selected: usize, area: Option<Rect> },
     Notices { area: Option<Rect> },
+    /// Modal text input shown when the user spawns a new worktree.
+    SpawnInput {
+        input: String,
+        target_repo: String,
+        target_repo_root: String,
+        agent_idx: usize,
+        mode_idx: usize,
+        field: SpawnField,
+        anchor_y: Option<u16>,
+        error: Option<String>,
+        area: Option<Rect>,
+    },
+    /// Confirmation prompt shown when the user removes a sidebar-spawned pane.
+    RemoveConfirm {
+        pane_id: String,
+        branch: String,
+        error: Option<String>,
+        area: Option<Rect>,
+    },
 }
 
 struct ScrollState {
