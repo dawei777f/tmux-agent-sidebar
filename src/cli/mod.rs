@@ -25,6 +25,7 @@ pub fn run(args: &[String]) -> Option<i32> {
         "set-status" => cmd_set_status(rest),
         "spawn" => spawn::cmd_spawn(rest),
         "capture" => capture::cmd_capture(rest),
+        "daemon" => crate::daemon::run_daemon_from_cli(),
         "--version" | "version" => {
             println!("{}", crate::VERSION);
             0

@@ -3,8 +3,9 @@ use std::process::Command;
 
 use crate::process::{ProcessSnapshot, command_basename};
 use crate::tmux::SessionInfo;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct PaneProcessSnapshot {
     pub ports_by_pane: HashMap<String, Vec<u16>>,
     pub command_by_pane: HashMap<String, String>,

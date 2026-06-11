@@ -119,7 +119,10 @@ Per-pane file-based state:
 │  layout.pane_row_targets, activity.entries,                 │
 │  pane_states.map[..].task_progress                          │
 ├─────────────────────────────────────────────────────────────┤
-│  Every 10s (port scan, background)                          │
+│  Every 1s / shared daemon snapshot                          │
+│  tmux panes + process tree snapshot, shared across sidebars  │
+├─────────────────────────────────────────────────────────────┤
+│  Every 10s / shared daemon port scan                        │
 │  pane_states.map[..].ports, agent liveness cleanup          │
 ├─────────────────────────────────────────────────────────────┤
 │  Every 10s (session_names background thread)                │
@@ -168,13 +171,16 @@ TUI main loop (app::run in app.rs; submodules app/{setup,workers,input,render})
     → initializes Claude notices state once
                         ↓
   → refresh() every 1s
-    → query_sessions() (tmux.rs)     ← reads @pane_* via `tmux list-panes -a`
+    → daemon::snapshot_from_daemon()
+      → starts/reuses one localhost daemon process for this tmux server
+      → daemon runs one shared `tmux list-panes -a` + `ps` snapshot per tick
+      → daemon runs lsof-backed port/liveness scan at most every 10s
+      → falls back to local query path if the daemon cannot be reached
     → group_panes_by_repo() (group.rs)
     → rebuild_row_targets()          ← applies GlobalState filters
     → refresh_activity_data()        ← reads /tmp activity logs
     → refresh_task_progress()        ← updates PaneRuntimeState.task_progress
-    → refresh_port_data()            ← updates PaneRuntimeState.ports
-    → scan_session_process_snapshot() ← detects dead panes and clears stale tmux metadata
+    → apply daemon port snapshot      ← updates PaneRuntimeState.ports when present
                         ↓
   → git_rx.try_recv()                ← receives GitData from background thread
   → notices popup render/copy state  ← derived from AppState plugin fields

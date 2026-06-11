@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use crate::activity::{self, TaskProgress};
 use crate::cli::sanitize_tmux_value;
+use crate::daemon::GlobalSnapshot;
 use crate::process::ProcessSnapshot;
 use crate::tmux::{self, PaneStatus, SessionInfo};
 
@@ -147,6 +148,11 @@ impl AppState {
     pub fn refresh(&mut self) -> bool {
         self.refresh_now();
         let (focused, window_active, _, _) = tmux::get_sidebar_pane_info(&self.tmux_pane);
+        if let Some(snapshot) = crate::daemon::snapshot_from_daemon() {
+            self.apply_global_snapshot(focused, snapshot);
+            return window_active;
+        }
+
         let (mut sessions, mut process_snapshot) = tmux::query_sessions_with_process_snapshot();
         self.sweep_dead_bg_shells_if_due(&mut sessions, &mut process_snapshot);
         if let Some(process_snapshot) = self.refresh_port_data(&sessions, process_snapshot.as_ref())
@@ -165,6 +171,38 @@ impl AppState {
         }
         self.refresh_activity_data();
         window_active
+    }
+
+    fn apply_global_snapshot(&mut self, focused: bool, snapshot: GlobalSnapshot) {
+        let GlobalSnapshot {
+            sessions,
+            port_snapshot,
+            port_snapshot_fresh,
+            ..
+        } = snapshot;
+        if let Some(process_snapshot) = port_snapshot {
+            self.apply_port_snapshot(&sessions, &process_snapshot, port_snapshot_fresh);
+            let sessions = if port_snapshot_fresh {
+                Self::filter_sessions_to_live_agent_panes(
+                    sessions,
+                    &process_snapshot.live_agent_panes,
+                )
+            } else {
+                sessions
+            };
+            self.apply_session_snapshot(focused, sessions);
+            if port_snapshot_fresh {
+                self.timers.port_scan_initialized = true;
+                self.timers.last_port_refresh = std::time::Instant::now();
+            }
+        } else {
+            self.apply_session_snapshot(focused, sessions);
+        }
+        if self.sessions.dirty {
+            self.refresh_session_names();
+            self.sessions.dirty = false;
+        }
+        self.refresh_activity_data();
     }
 
     /// Apply the current `session_id → name` map to each pane so the
@@ -196,41 +234,50 @@ impl AppState {
             || self.timers.last_port_refresh.elapsed() >= PORT_REFRESH_INTERVAL
         {
             let scanned = crate::port::scan_session_process_snapshot(sessions, process_snapshot)?;
-            let mut updates: Vec<(String, Vec<u16>, Option<String>)> = Vec::new();
-            let mut dead_panes: Vec<String> = Vec::new();
-            for session in sessions {
-                for window in &session.windows {
-                    for pane in &window.panes {
-                        if !scanned.live_agent_panes.contains(&pane.pane_id) {
-                            dead_panes.push(pane.pane_id.clone());
-                        }
-                        updates.push((
-                            pane.pane_id.clone(),
-                            scanned
-                                .ports_by_pane
-                                .get(&pane.pane_id)
-                                .cloned()
-                                .unwrap_or_default(),
-                            scanned.command_by_pane.get(&pane.pane_id).cloned(),
-                        ));
-                    }
-                }
-            }
-            for (pane_id, ports, command) in updates {
-                let pane_state = self.pane_state_mut(&pane_id);
-                pane_state.ports = ports;
-                pane_state.command = command;
-            }
-            for pane_id in dead_panes {
-                Self::clear_dead_agent_metadata(&pane_id);
-                self.clear_pane_state(&pane_id);
-            }
+            self.apply_port_snapshot(sessions, &scanned, true);
             self.timers.port_scan_initialized = true;
             self.timers.last_port_refresh = std::time::Instant::now();
             return Some(scanned);
         }
 
         None
+    }
+
+    fn apply_port_snapshot(
+        &mut self,
+        sessions: &[SessionInfo],
+        scanned: &crate::port::PaneProcessSnapshot,
+        clear_dead_panes: bool,
+    ) {
+        let mut updates: Vec<(String, Vec<u16>, Option<String>)> = Vec::new();
+        let mut dead_panes: Vec<String> = Vec::new();
+        for session in sessions {
+            for window in &session.windows {
+                for pane in &window.panes {
+                    if clear_dead_panes && !scanned.live_agent_panes.contains(&pane.pane_id) {
+                        dead_panes.push(pane.pane_id.clone());
+                    }
+                    updates.push((
+                        pane.pane_id.clone(),
+                        scanned
+                            .ports_by_pane
+                            .get(&pane.pane_id)
+                            .cloned()
+                            .unwrap_or_default(),
+                        scanned.command_by_pane.get(&pane.pane_id).cloned(),
+                    ));
+                }
+            }
+        }
+        for (pane_id, ports, command) in updates {
+            let pane_state = self.pane_state_mut(&pane_id);
+            pane_state.ports = ports;
+            pane_state.command = command;
+        }
+        for pane_id in dead_panes {
+            Self::clear_dead_agent_metadata(&pane_id);
+            self.clear_pane_state(&pane_id);
+        }
     }
 
     pub(crate) fn refresh_task_progress(&mut self) {
@@ -673,6 +720,25 @@ mod tests {
         clear_dead_bg_shells(&mut sessions, &snapshot);
 
         assert!(sessions[0].windows[0].panes[0].bg_shell_cmd.is_none());
+    }
+
+    #[test]
+    fn cached_daemon_port_snapshot_does_not_clear_panes_from_old_liveness_set() {
+        let _guard = tmux::test_mock::install();
+        let pane_id = "%NEW_AFTER_PORT_SCAN";
+        tmux::test_mock::set(pane_id, tmux::PANE_STATUS, "running");
+
+        let mut state = AppState::new(String::new());
+        let sessions = test_session(vec![test_pane(pane_id)]);
+        let scanned = crate::port::PaneProcessSnapshot::default();
+
+        state.apply_port_snapshot(&sessions, &scanned, false);
+
+        assert!(
+            tmux::test_mock::contains(pane_id, tmux::PANE_STATUS),
+            "cached daemon port snapshots must not use an old live-agent set to clear new panes"
+        );
+        assert!(state.pane_state(pane_id).is_some());
     }
 
     // ─── ps_line_matches_cmd ────────────────────────────────────────

@@ -3,14 +3,15 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::tmux::AgentType;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ProcessInfo {
     pub(crate) comm: String,
     pub(crate) args: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ProcessSnapshot {
     pub(crate) children_of: HashMap<u32, Vec<u32>>,
     pub(crate) info_by_pid: HashMap<u32, ProcessInfo>,
