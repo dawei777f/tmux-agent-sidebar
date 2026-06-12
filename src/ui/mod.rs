@@ -1,4 +1,3 @@
-pub mod bottom;
 pub mod colors;
 pub mod icons;
 pub mod notices;
@@ -17,9 +16,8 @@ use crate::{state::AppState, tmux};
 
 pub const BOTTOM_PANEL_HEIGHT: u16 = 20;
 
-/// Rows reserved between the pane list and the bottom panel when the pet is
-/// enabled. The pet and its desk/chair all render inside this band so they
-/// never overdraw the pane list above or the bottom panel's border below.
+/// Rows reserved below the pane list when the pet is enabled. The pet and its
+/// desk/chair all render inside this band so they never overdraw the pane list.
 pub const PET_SCENE_HEIGHT: u16 = 5;
 
 /// Read `@sidebar_bottom_height` from tmux global options, falling back to the default.
@@ -57,21 +55,10 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
     state.layout.hyperlink_overlays.clear();
     let area = frame.area();
 
-    let bot_h = state.bottom_panel_height;
-    let divider_h = if bot_h > 0 && state.pet_enabled {
-        PET_SCENE_HEIGHT
-    } else {
-        1
-    };
-
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints(if bot_h > 0 {
-            vec![
-                Constraint::Min(1),
-                Constraint::Length(divider_h),
-                Constraint::Length(bot_h),
-            ]
+        .constraints(if state.pet_enabled {
+            vec![Constraint::Min(1), Constraint::Length(PET_SCENE_HEIGHT)]
         } else {
             vec![Constraint::Min(1)]
         })
@@ -79,12 +66,9 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
 
     panes::draw_agents(frame, state, chunks[0]);
 
-    if bot_h > 0 && chunks.len() > 2 {
-        bottom::draw_bottom(frame, state, chunks[2]);
-        if state.pet_enabled {
-            let running_count = state.running_count();
-            pet::draw_pet(frame, state, chunks[1], running_count);
-        }
+    if state.pet_enabled && chunks.len() > 1 {
+        let running_count = state.running_count();
+        pet::draw_pet(frame, state, chunks[1], running_count);
     }
 }
 

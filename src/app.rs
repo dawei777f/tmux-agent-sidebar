@@ -11,7 +11,6 @@ use crossterm::event::{self};
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::SPINNER_PULSE;
-use crate::state::BottomTab;
 
 mod input;
 mod render;
@@ -57,13 +56,11 @@ fn next_poll_timeout(
     }
 
     let refresh_timeout = refresh_interval(window_active).saturating_sub(now - last_refresh);
-    let next_work_timeout =
-        if let Some(interval) = spinner_interval(window_active && animation_active) {
-            refresh_timeout.min(interval.saturating_sub(now - last_spinner))
-        } else {
-            refresh_timeout
-        };
-    next_work_timeout
+    if let Some(interval) = spinner_interval(window_active && animation_active) {
+        refresh_timeout.min(interval.saturating_sub(now - last_spinner))
+    } else {
+        refresh_timeout
+    }
 }
 
 fn should_run_full_refresh(
@@ -95,10 +92,8 @@ pub fn run(
 
     let workers = workers::spawn(&state, initial_window_active);
     let workers::Workers {
-        git_rx,
         session_rx,
         version_rx,
-        git_tab_active,
         sidebar_visible,
     } = workers;
 
@@ -126,7 +121,7 @@ pub fn run(
         if event::poll(timeout)? {
             loop {
                 let ev = event::read()?;
-                if input::handle_event(ev, &mut state, &git_tab_active, terminal) {
+                if input::handle_event(ev, &mut state, terminal) {
                     needs_redraw = true;
                 }
                 if !event::poll(Duration::ZERO)? {
@@ -149,7 +144,6 @@ pub fn run(
 
         let sigusr1 = needs_refresh.swap(false, Ordering::Relaxed);
         if sigusr1 || last_refresh.elapsed() >= refresh_interval(window_active) {
-            let previous_focused_pane_id = state.focus_state.focused_pane_id.clone();
             let now = std::time::Instant::now();
             let mut full_refresh =
                 should_run_full_refresh(sigusr1, window_active, last_full_refresh, now);
@@ -168,9 +162,6 @@ pub fn run(
                     active
                 }
             };
-            if state.focus_state.focused_pane_id != previous_focused_pane_id {
-                render::refresh_git_for_focused_pane(&mut state);
-            }
             needs_redraw = full_refresh;
             if window_active {
                 if window_inactive_count >= 2 {
@@ -181,14 +172,8 @@ pub fn run(
             } else {
                 window_inactive_count = window_inactive_count.saturating_add(1);
             }
-            git_tab_active.store(state.bottom_tab == BottomTab::GitStatus, Ordering::Relaxed);
             sidebar_visible.store(window_active, Ordering::Relaxed);
             last_refresh = std::time::Instant::now();
-        }
-
-        if let Ok(data) = git_rx.try_recv() {
-            state.apply_git_data(data);
-            needs_redraw = true;
         }
 
         if let Ok(names) = session_rx.try_recv() {

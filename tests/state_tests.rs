@@ -2,10 +2,9 @@
 mod test_helpers;
 
 use test_helpers::*;
-use tmux_agent_sidebar::activity::ActivityEntry;
 use tmux_agent_sidebar::group::{PaneGitInfo, RepoGroup};
 use tmux_agent_sidebar::state::{
-    AppState, BottomTab, Focus, GlobalState, PopupState, RepoFilter, RowTarget, StatusFilter,
+    AppState, Focus, GlobalState, PopupState, RepoFilter, RowTarget, StatusFilter,
 };
 use tmux_agent_sidebar::tmux::{
     self, AgentType, PaneInfo, PaneStatus, SessionInfo, WindowInfo, WorktreeMetadata,
@@ -41,36 +40,6 @@ fn test_move_pane_selection_empty() {
     let mut state = make_state(vec![]);
     state.move_pane_selection(1);
     assert_eq!(state.global.selected_pane_row, 0);
-}
-
-#[test]
-fn test_scroll_activity_bounds() {
-    let mut state = make_state(vec![]);
-    state.activity.entries = vec![
-        ActivityEntry {
-            timestamp: "10:00".into(),
-            tool: "Read".into(),
-            label: "a".into(),
-        },
-        ActivityEntry {
-            timestamp: "10:01".into(),
-            tool: "Edit".into(),
-            label: "b".into(),
-        },
-        ActivityEntry {
-            timestamp: "10:02".into(),
-            tool: "Bash".into(),
-            label: "c".into(),
-        },
-    ];
-    state.activity.scroll.total_lines = 6;
-    state.activity.scroll.visible_height = 4;
-    state.activity.scroll.scroll(1);
-    assert_eq!(state.activity.scroll.offset, 1);
-    state.activity.scroll.scroll(5);
-    assert_eq!(state.activity.scroll.offset, 2); // clamped to 6-4=2
-    state.activity.scroll.scroll(-10);
-    assert_eq!(state.activity.scroll.offset, 0);
 }
 
 // ─── line_to_row Mapping Tests ─────────────────────────────────────
@@ -283,85 +252,6 @@ fn test_rebuild_row_targets_clamps_selection() {
 // tested via unit tests in tmux.rs. focused_pane_id is pub, so tests
 // can set it directly.
 
-#[test]
-fn test_scroll_git_empty_is_noop() {
-    let mut state = make_state(vec![]);
-    state.scrolls.git.offset = 0;
-    state.bottom_tab = BottomTab::GitStatus;
-    state.scroll_bottom(5);
-    assert_eq!(
-        state.scrolls.git.offset, 0,
-        "scrolling empty git should be no-op"
-    );
-}
-
-// ─── State: scroll_git Tests ────────────────────────────────────────
-
-#[test]
-fn test_scroll_git_bounds() {
-    let mut state = make_state(vec![]);
-    state.git.unstaged_files = vec![tmux_agent_sidebar::git::GitFileEntry {
-        status: 'M',
-        name: "file.rs".into(),
-        additions: 0,
-        deletions: 0,
-        path: String::new(),
-    }];
-    state.scrolls.git.total_lines = 8;
-    state.scrolls.git.visible_height = 3;
-    state.scrolls.git.offset = 0;
-
-    state.scrolls.git.scroll(2);
-    assert_eq!(state.scrolls.git.offset, 2);
-
-    // Clamp to max (8 - 3 = 5)
-    state.scrolls.git.scroll(10);
-    assert_eq!(state.scrolls.git.offset, 5);
-
-    // Clamp to 0
-    state.scrolls.git.scroll(-100);
-    assert_eq!(state.scrolls.git.offset, 0);
-}
-
-// ─── State: apply_git_data Tests ────────────────────────────────────
-
-#[test]
-fn test_apply_git_data() {
-    use tmux_agent_sidebar::git::{GitData, GitFileEntry};
-
-    let mut state = make_state(vec![]);
-    let data = GitData {
-        diff_stat: Some((10, 5)),
-        branch: "feature/test".into(),
-        ahead_behind: Some((2, 1)),
-        staged_files: vec![GitFileEntry {
-            status: 'M',
-            name: "src/lib.rs".into(),
-            additions: 10,
-            deletions: 5,
-            path: String::new(),
-        }],
-        unstaged_files: vec![],
-        untracked_files: vec![],
-        remote_url: "https://github.com/user/repo".into(),
-        pr_number: Some("42".into()),
-    };
-
-    state.apply_git_data(data);
-
-    assert_eq!(state.git.staged_files.len(), 1);
-    assert_eq!(state.git.staged_files[0].status, 'M');
-    assert_eq!(state.git.staged_files[0].name, "src/lib.rs");
-    assert!(state.git.unstaged_files.is_empty());
-    assert!(state.git.untracked_files.is_empty());
-    assert_eq!(state.git.changed_file_count(), 1);
-    assert_eq!(state.git.diff_stat, Some((10, 5)));
-    assert_eq!(state.git.branch, "feature/test");
-    assert_eq!(state.git.ahead_behind, Some((2, 1)));
-    assert_eq!(state.git.remote_url, "https://github.com/user/repo");
-    assert_eq!(state.git.pr_number, Some("42".into()));
-}
-
 // ─── State: new Tests ───────────────────────────────────────────────
 
 #[test]
@@ -375,16 +265,9 @@ fn test_state_new_defaults() {
     assert_eq!(state.spinner_frame, 0);
     assert_eq!(state.global.selected_pane_row, 0);
     assert!(state.layout.pane_row_targets.is_empty());
-    assert!(state.activity.entries.is_empty());
-    assert_eq!(state.activity.scroll.offset, 0);
-    assert_eq!(state.activity.max_entries, 50);
     assert_eq!(state.scrolls.panes.offset, 0);
     assert_eq!(state.scrolls.panes.total_lines, 0);
     assert_eq!(state.scrolls.panes.visible_height, 0);
-    assert_eq!(state.bottom_tab, BottomTab::Activity);
-    assert!(state.git.branch.is_empty());
-    assert_eq!(state.scrolls.git.offset, 0);
-    assert!(state.git.pr_number.is_none());
 }
 
 // ─── State: move_pane_selection return value Tests ─────────────────
@@ -422,83 +305,6 @@ fn test_move_pane_selection_return_value() {
 
 // find_focused_pane edge case tests were removed because the function now
 // queries tmux directly. See tmux::find_active_pane tests instead.
-
-// ─── State: scroll_bottom dispatch Tests ────────────────────────────
-
-#[test]
-fn test_scroll_bottom_dispatches_to_git() {
-    let mut state = make_state(vec![]);
-    state.bottom_tab = BottomTab::GitStatus;
-    state.git.unstaged_files = vec![tmux_agent_sidebar::git::GitFileEntry {
-        status: 'M',
-        name: "file.rs".into(),
-        additions: 0,
-        deletions: 0,
-        path: String::new(),
-    }];
-    state.scrolls.git.total_lines = 10;
-    state.scrolls.git.visible_height = 3;
-    state.scrolls.git.offset = 0;
-
-    state.scroll_bottom(2);
-    assert_eq!(state.scrolls.git.offset, 2);
-}
-
-#[test]
-fn test_scroll_bottom_dispatches_to_activity() {
-    let mut state = make_state(vec![]);
-    state.bottom_tab = BottomTab::Activity;
-    state.activity.entries = vec![ActivityEntry {
-        timestamp: "10:00".into(),
-        tool: "Read".into(),
-        label: "a".into(),
-    }];
-    state.activity.scroll.total_lines = 10;
-    state.activity.scroll.visible_height = 3;
-    state.activity.scroll.offset = 0;
-
-    state.scroll_bottom(2);
-    assert_eq!(state.activity.scroll.offset, 2);
-}
-
-// ─── State: next_bottom_tab cycle Tests ─────────────────────────────
-
-#[test]
-fn test_next_bottom_tab_full_cycle() {
-    let mut state = make_state(vec![]);
-    assert_eq!(state.bottom_tab, BottomTab::Activity);
-    state.next_bottom_tab();
-    assert_eq!(state.bottom_tab, BottomTab::GitStatus);
-    state.next_bottom_tab();
-    assert_eq!(state.bottom_tab, BottomTab::Activity);
-}
-
-// ─── State: scroll_activity empty Tests ─────────────────────────────
-
-#[test]
-fn test_scroll_activity_empty_is_noop() {
-    let mut state = make_state(vec![]);
-    state.activity.scroll.offset = 0;
-    state.activity.scroll.scroll(5);
-    assert_eq!(
-        state.activity.scroll.offset, 0,
-        "scrolling empty activity should be no-op"
-    );
-}
-
-// ─── State: git tab active flag Tests ───────────────────────────────
-
-#[test]
-fn test_git_tab_active_after_tab_switch() {
-    let mut state = make_state(vec![]);
-    assert_eq!(state.bottom_tab, BottomTab::Activity);
-
-    state.next_bottom_tab();
-    assert_eq!(state.bottom_tab, BottomTab::GitStatus);
-
-    state.next_bottom_tab();
-    assert_eq!(state.bottom_tab, BottomTab::Activity);
-}
 
 // ─── State: global sync → rebuild consistency Tests ─────────────
 

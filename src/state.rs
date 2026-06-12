@@ -15,10 +15,8 @@ mod popup;
 mod refresh;
 mod scroll;
 mod session;
-mod tab;
 mod timers;
 
-pub use activity::ActivityState;
 pub use filter::{RepoFilter, StatusFilter};
 pub use focus::{Focus, FocusState};
 pub use global::GlobalState;
@@ -33,12 +31,6 @@ pub(crate) use refresh::{TaskProgressDecision, classify_task_progress};
 pub use scroll::{ScrollState, ScrollStates};
 pub use session::SessionNamesState;
 pub use timers::RefreshTimers;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum BottomTab {
-    Activity,
-    GitStatus,
-}
 
 pub struct AppState {
     pub now: u64,
@@ -56,15 +48,11 @@ pub struct AppState {
     /// the UI layer; consumed by mouse/keyboard handlers before the
     /// next render.
     pub layout: FrameLayout,
-    pub activity: ActivityState,
     pub tmux_pane: String,
-    /// Scroll offsets for the agents list and git tab. Activity tab
-    /// scroll lives in [`ActivityState::scroll`].
+    /// Scroll offsets for the agents list.
     pub scrolls: ScrollStates,
     pub theme: ColorTheme,
     pub icons: StatusIcons,
-    pub bottom_tab: BottomTab,
-    pub git: crate::git::GitData,
     pub pane_states: PaneRuntimeMap,
     /// Periodic-refresh clocks (port scan, session-name scan, filter
     /// debounce, port-scan first-run flag).
@@ -121,8 +109,9 @@ pub struct AppState {
     pub version_notice: Option<crate::version::UpdateNotice>,
     /// Shared state across sidebar instances, persisted to tmux global variables.
     pub global: GlobalState,
-    /// Height of the bottom panel in lines. Loaded once at startup from
-    /// the `@sidebar_bottom_height` tmux option. A value of 0 hides the panel.
+    /// Deprecated compatibility value for the removed Activity/Git bottom
+    /// panel. Loaded from tmux so old configs do not break startup, but the UI
+    /// no longer renders a bottom panel.
     pub bottom_panel_height: u16,
     /// Maps session_id → session name, refreshed periodically from
     /// `~/.claude/sessions/*.json` files. The `dirty` flag is `true` when
@@ -148,13 +137,10 @@ impl AppState {
             flash: None,
             spinner_frame: 0,
             layout: FrameLayout::default(),
-            activity: ActivityState::new(),
             tmux_pane,
             scrolls: ScrollStates::default(),
             theme: ColorTheme::default(),
             icons: StatusIcons::default(),
-            bottom_tab: BottomTab::Activity,
-            git: crate::git::GitData::default(),
             pane_states: PaneRuntimeMap::new(),
             timers: RefreshTimers::default(),
             popup: PopupState::None,
@@ -230,7 +216,7 @@ mod tests {
 
     fn write_activity_log(pane_id: &str, contents: &str) -> String {
         let path = crate::activity::log_file_path(pane_id);
-        fs::write(&path, contents).unwrap();
+        std::fs::write(&path, contents).unwrap();
         path.to_string_lossy().into_owned()
     }
 
@@ -410,40 +396,6 @@ mod tests {
         let mut state = AppState::new("%99".into());
         state.refresh_now();
         assert!(state.now > 0);
-    }
-
-    #[test]
-    fn refresh_activity_log_reads_focused_pane() {
-        let mut state = AppState::new("%99".into());
-        let pane_id = "%201";
-        let log_path = crate::activity::log_file_path(pane_id);
-        fs::write(&log_path, "10:00|Read|old\n10:01|Edit|new\n").unwrap();
-        state.focus_state.focused_pane_id = Some(pane_id.into());
-        state.activity.max_entries = 50;
-
-        state.refresh_activity_log();
-
-        assert_eq!(state.activity.entries.len(), 2);
-        assert_eq!(state.activity.entries[0].tool, "Edit");
-        assert_eq!(state.activity.entries[0].label, "new");
-        assert_eq!(state.activity.entries[1].tool, "Read");
-
-        fs::remove_file(&log_path).ok();
-    }
-
-    #[test]
-    fn refresh_activity_log_clears_without_focus() {
-        let mut state = AppState::new("%99".into());
-        state.activity.entries = vec![crate::activity::ActivityEntry {
-            timestamp: "10:00".into(),
-            tool: "Read".into(),
-            label: "keep?".into(),
-        }];
-
-        state.focus_state.focused_pane_id = None;
-        state.refresh_activity_log();
-
-        assert!(state.activity.entries.is_empty());
     }
 
     #[test]
@@ -867,63 +819,6 @@ mod tests {
         assert_eq!(s.offset, 2);
     }
 
-    // ─── apply_git_data tests ───────────────────────────────────────
-
-    #[test]
-    fn apply_git_data_copies_all_fields() {
-        let mut state = AppState::new("%99".into());
-        let data = crate::git::GitData {
-            diff_stat: Some((10, 5)),
-            branch: "feature/test".into(),
-            ahead_behind: Some((2, 1)),
-            staged_files: vec![crate::git::GitFileEntry {
-                status: 'M',
-                name: "lib.rs".into(),
-                additions: 10,
-                deletions: 5,
-                path: String::new(),
-            }],
-            unstaged_files: vec![],
-            untracked_files: vec!["new.rs".into()],
-            remote_url: "https://github.com/user/repo".into(),
-            pr_number: Some("42".into()),
-        };
-
-        state.apply_git_data(data);
-
-        assert_eq!(state.git.diff_stat, Some((10, 5)));
-        assert_eq!(state.git.branch, "feature/test");
-        assert_eq!(state.git.ahead_behind, Some((2, 1)));
-        assert_eq!(state.git.staged_files.len(), 1);
-        assert_eq!(state.git.staged_files[0].status, 'M');
-        assert!(state.git.unstaged_files.is_empty());
-        assert_eq!(state.git.untracked_files, vec!["new.rs"]);
-        assert_eq!(state.git.changed_file_count(), 2);
-        assert_eq!(state.git.remote_url, "https://github.com/user/repo");
-        assert_eq!(state.git.pr_number, Some("42".into()));
-    }
-
-    #[test]
-    fn apply_git_data_with_defaults() {
-        let mut state = AppState::new("%99".into());
-        // Pre-fill some state
-        state.git.branch = "old-branch".into();
-        state.git.pr_number = Some("99".into());
-
-        // Apply empty git data
-        state.apply_git_data(crate::git::GitData::default());
-
-        assert_eq!(state.git.diff_stat, None);
-        assert!(state.git.branch.is_empty());
-        assert_eq!(state.git.ahead_behind, None);
-        assert!(state.git.staged_files.is_empty());
-        assert!(state.git.unstaged_files.is_empty());
-        assert!(state.git.untracked_files.is_empty());
-        assert_eq!(state.git.changed_file_count(), 0);
-        assert!(state.git.remote_url.is_empty());
-        assert_eq!(state.git.pr_number, None);
-    }
-
     #[test]
     fn apply_session_snapshot_rebuilds_derived_state() {
         let mut state = AppState::new("%99".into());
@@ -951,66 +846,18 @@ mod tests {
         // directly, so we don't assert it here (tmux not available in tests).
     }
 
-    // ─── auto_switch_tab tests are in state/tab.rs ────────────────
-
-    // ─── next_bottom_tab / scroll_bottom tests ──────────────────────
-
-    #[test]
-    fn next_bottom_tab_toggles() {
-        let mut state = AppState::new("%99".into());
-        assert_eq!(state.bottom_tab, BottomTab::Activity);
-        state.next_bottom_tab();
-        assert_eq!(state.bottom_tab, BottomTab::GitStatus);
-        state.next_bottom_tab();
-        assert_eq!(state.bottom_tab, BottomTab::Activity);
-    }
-
-    #[test]
-    fn scroll_bottom_dispatches_to_activity() {
-        let mut state = AppState::new("%99".into());
-        state.bottom_tab = BottomTab::Activity;
-        state.activity.scroll = ScrollState {
-            offset: 0,
-            total_lines: 10,
-            visible_height: 3,
-        };
-
-        state.scroll_bottom(2);
-        assert_eq!(state.activity.scroll.offset, 2);
-        assert_eq!(state.scrolls.git.offset, 0);
-    }
-
-    #[test]
-    fn scroll_bottom_dispatches_to_git() {
-        let mut state = AppState::new("%99".into());
-        state.bottom_tab = BottomTab::GitStatus;
-        state.scrolls.git = ScrollState {
-            offset: 0,
-            total_lines: 10,
-            visible_height: 3,
-        };
-
-        state.scroll_bottom(2);
-        assert_eq!(state.scrolls.git.offset, 2);
-        assert_eq!(state.activity.scroll.offset, 0);
-    }
-
     // ─── handle_mouse_scroll tests ────────────────────────────────────
 
     #[test]
-    fn mouse_scroll_in_bottom_panel_scrolls_activity() {
+    fn mouse_scroll_in_former_bottom_area_scrolls_agents() {
         let mut state = AppState::new("%99".into());
-        state.bottom_tab = BottomTab::Activity;
-        state.activity.scroll = ScrollState {
+        state.scrolls.panes = ScrollState {
             offset: 0,
             total_lines: 30,
             visible_height: 10,
         };
-        // term_height=50, bottom_panel=20 → bottom starts at row 30
-        // mouse at row 35 → in bottom panel
         state.handle_mouse_scroll(35, 50, 20, 3);
-        assert_eq!(state.activity.scroll.offset, 3);
-        assert_eq!(state.scrolls.panes.offset, 0);
+        assert_eq!(state.scrolls.panes.offset, 3);
     }
 
     #[test]
@@ -1025,7 +872,6 @@ mod tests {
         // mouse at row 10 → in agents panel
         state.handle_mouse_scroll(10, 50, 20, 3);
         assert_eq!(state.scrolls.panes.offset, 3);
-        assert_eq!(state.activity.scroll.offset, 0);
     }
 
     #[test]
@@ -1041,19 +887,15 @@ mod tests {
     }
 
     #[test]
-    fn mouse_scroll_at_boundary_row_goes_to_bottom() {
+    fn mouse_scroll_at_former_boundary_goes_to_agents() {
         let mut state = AppState::new("%99".into());
-        state.bottom_tab = BottomTab::GitStatus;
-        state.scrolls.git = ScrollState {
+        state.scrolls.panes = ScrollState {
             offset: 0,
-            total_lines: 20,
+            total_lines: 40,
             visible_height: 10,
         };
-        // term_height=50, bottom_panel=20 → bottom starts at row 30
-        // mouse at exactly row 30 → in bottom panel
         state.handle_mouse_scroll(30, 50, 20, 3);
-        assert_eq!(state.scrolls.git.offset, 3);
-        assert_eq!(state.scrolls.panes.offset, 0);
+        assert_eq!(state.scrolls.panes.offset, 3);
     }
 
     #[test]
@@ -1067,7 +909,6 @@ mod tests {
         // row 29, just above bottom_start=30
         state.handle_mouse_scroll(29, 50, 20, 3);
         assert_eq!(state.scrolls.panes.offset, 3);
-        assert_eq!(state.activity.scroll.offset, 0);
     }
 
     // ─── move_pane_selection edge cases ─────────────────────────────

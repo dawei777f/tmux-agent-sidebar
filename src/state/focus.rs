@@ -6,7 +6,6 @@ pub enum Focus {
     Filter,
     #[default]
     Panes,
-    ActivityLog,
 }
 
 #[derive(Debug, Clone)]
@@ -56,10 +55,9 @@ impl AppState {
 
     pub fn find_focused_pane(&mut self) {
         // Query tmux directly for the active pane, not through `repo_groups`
-        // which only contains agent panes. This allows activity/git info to
-        // be displayed even when the focused pane has no agent running.
+        // which only contains agent panes.
         // When the sidebar has focus, find_active_pane returns None — preserve
-        // the previously focused pane so bottom panel data stays stable.
+        // the previously focused pane so the selection stays stable.
         if let Some((id, _)) = tmux::find_active_pane(&self.tmux_pane) {
             self.focus_state.focused_pane_id = Some(id);
         }

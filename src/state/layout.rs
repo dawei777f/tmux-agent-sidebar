@@ -99,20 +99,15 @@ impl AppState {
         }
     }
 
-    /// Handle mouse scroll event, routing to agents or bottom panel based on Y position.
+    /// Handle mouse scroll event for the agents list.
     pub fn handle_mouse_scroll(
         &mut self,
-        row: u16,
-        term_height: u16,
-        bottom_panel_height: u16,
+        _row: u16,
+        _term_height: u16,
+        _bottom_panel_height: u16,
         delta: isize,
     ) {
-        let bottom_start = term_height.saturating_sub(bottom_panel_height);
-        if row >= bottom_start {
-            self.scroll_bottom(delta);
-        } else {
-            self.scrolls.panes.scroll(delta);
-        }
+        self.scrolls.panes.scroll(delta);
     }
 
     /// Handle mouse click on the filter bar (row 0).

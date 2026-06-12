@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 
 use super::AppState;
 use crate::activity::TaskProgress;
-use crate::state::BottomTab;
 
 /// Per-pane runtime state that should vanish together with the pane.
 #[derive(Debug, Clone, Default)]
@@ -12,11 +11,6 @@ pub struct PaneRuntimeState {
     pub task_progress: Option<TaskProgress>,
     pub task_dismissed_total: Option<usize>,
     pub inactive_since: Option<u64>,
-    /// Last bottom tab the user selected while this pane was focused.
-    /// `None` until the user changes tabs at least once. Cleaned up
-    /// automatically by `prune_pane_states_to_current_panes` when the
-    /// pane disappears, so a relaunched pane starts fresh.
-    pub tab_pref: Option<BottomTab>,
     /// Last observed mtime of this pane's `/tmp/tmux-agent-activity*.log`.
     /// Used by `refresh_task_progress` to skip the (potentially expensive)
     /// re-parse when the log has not been touched since the previous tick.
@@ -26,15 +20,12 @@ pub struct PaneRuntimeState {
 #[derive(Debug, Clone)]
 pub struct PaneRuntimeMap {
     pub map: HashMap<String, PaneRuntimeState>,
-    /// Agent pane IDs that have already been seen.
-    pub seen: HashSet<String>,
 }
 
 impl PaneRuntimeMap {
     pub fn new() -> Self {
         Self {
             map: HashMap::new(),
-            seen: HashSet::new(),
         }
     }
 
@@ -141,14 +132,12 @@ mod tests {
     fn new_starts_empty() {
         let map = PaneRuntimeMap::new();
         assert!(map.map.is_empty());
-        assert!(map.seen.is_empty());
     }
 
     #[test]
     fn default_delegates_to_new() {
         let map = PaneRuntimeMap::default();
         assert!(map.map.is_empty());
-        assert!(map.seen.is_empty());
     }
 
     #[test]
@@ -160,7 +149,6 @@ mod tests {
         assert!(state.task_progress.is_none());
         assert!(state.task_dismissed_total.is_none());
         assert!(state.inactive_since.is_none());
-        assert!(state.tab_pref.is_none());
         assert!(state.task_progress_log_mtime.is_none());
     }
 

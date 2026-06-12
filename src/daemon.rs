@@ -465,6 +465,19 @@ mod tests {
         }
     }
 
+    fn request_snapshot_retry(addr: &str) -> Option<GlobalSnapshot> {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            if let Some(snapshot) = request_snapshot(addr) {
+                return Some(snapshot);
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
     #[test]
     fn daemon_serves_multiple_clients_from_one_collector_refresh() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind test daemon");
@@ -481,8 +494,8 @@ mod tests {
             run_listener_until_idle(listener, provider, None, Duration::from_secs(5), Some(2));
         });
 
-        let first = request_snapshot(&addr).expect("first snapshot");
-        let second = request_snapshot(&addr).expect("second snapshot");
+        let first = request_snapshot_retry(&addr).expect("first snapshot");
+        let second = request_snapshot_retry(&addr).expect("second snapshot");
         server.join().expect("server exits");
 
         assert_eq!(first.sessions[0].session_name, "shared");
