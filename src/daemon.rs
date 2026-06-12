@@ -1,7 +1,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,9 @@ const DAEMON_IDLE_TTL: Duration = Duration::from_secs(60);
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(150);
 const READ_TIMEOUT: Duration = Duration::from_millis(700);
 const SIDEBAR_DAEMON_ADDR: &str = "@sidebar_daemon_addr";
+const SIDEBAR_DAEMON_STARTING: &str = "@sidebar_daemon_starting";
+const DAEMON_STDOUT_ADDR_ENV: &str = "TMUX_AGENT_SIDEBAR_DAEMON_STDOUT_ADDR";
+const STARTUP_CLAIM_TTL: Duration = Duration::from_secs(2);
 
 static DAEMON_ADDR_CACHE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
@@ -155,6 +158,11 @@ fn request_snapshot(addr: &str) -> Option<GlobalSnapshot> {
 }
 
 pub(crate) fn run_daemon_from_cli() -> i32 {
+    let publish_to_tmux = std::env::var_os(DAEMON_STDOUT_ADDR_ENV).is_none();
+    if publish_to_tmux && request_snapshot_from_tmux_daemon().is_some() {
+        return 0;
+    }
+
     match TcpListener::bind(("127.0.0.1", 0)) {
         Ok(listener) => {
             let addr = match listener.local_addr() {
@@ -164,8 +172,14 @@ pub(crate) fn run_daemon_from_cli() -> i32 {
                     return 1;
                 }
             };
-            let _ = tmux::run_tmux(&["set", "-g", SIDEBAR_DAEMON_ADDR, &addr.to_string()]);
-            run_registered_listener(listener, SnapshotProvider::default(), addr.to_string());
+            let addr = addr.to_string();
+            if publish_to_tmux {
+                let _ = tmux::run_tmux(&["set", "-g", SIDEBAR_DAEMON_ADDR, &addr]);
+            } else {
+                println!("{addr}");
+                let _ = std::io::stdout().flush();
+            }
+            run_registered_listener(listener, SnapshotProvider::default(), addr);
             0
         }
         Err(err) => {
@@ -176,22 +190,103 @@ pub(crate) fn run_daemon_from_cli() -> i32 {
 }
 
 fn start_daemon_from_current_exe() -> Option<()> {
+    if request_snapshot_from_tmux_daemon().is_some() {
+        return Some(());
+    }
+
+    let claim = format!("{}:{}", std::process::id(), now_epoch_ms());
+    if !claim_daemon_start(&claim) {
+        return wait_for_daemon_start(STARTUP_CLAIM_TTL);
+    }
+
+    let result = start_daemon_with_claim();
+    clear_daemon_start_claim(&claim);
+    result
+}
+
+fn start_daemon_with_claim() -> Option<()> {
+    if request_snapshot_from_tmux_daemon().is_some() {
+        return Some(());
+    }
+
     let exe = std::env::current_exe().ok()?;
-    let child = Command::new(exe)
+    let mut child = Command::new(exe)
         .arg("daemon")
+        .env(DAEMON_STDOUT_ADDR_ENV, "1")
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .ok()?;
-    let _ = child.id();
+    let stdout = child.stdout.take()?;
+    let addr = read_daemon_addr(stdout)?;
     for _ in 0..20 {
+        if request_snapshot(&addr).is_some() {
+            tmux::run_tmux(&["set", "-g", SIDEBAR_DAEMON_ADDR, &addr])?;
+            set_cached_daemon_addr(Some(addr));
+            return Some(());
+        }
         std::thread::sleep(Duration::from_millis(25));
+    }
+    let _ = child.kill();
+    None
+}
+
+fn wait_for_daemon_start(timeout: Duration) -> Option<()> {
+    let started = Instant::now();
+    while started.elapsed() < timeout {
         if request_snapshot_from_tmux_daemon().is_some() {
             return Some(());
         }
+        std::thread::sleep(Duration::from_millis(25));
     }
     None
+}
+
+fn claim_daemon_start(claim: &str) -> bool {
+    if let Some(existing) = tmux::get_option(SIDEBAR_DAEMON_STARTING) {
+        if starting_claim_is_fresh(&existing) {
+            return false;
+        }
+        let _ = tmux::run_tmux(&["set", "-gu", SIDEBAR_DAEMON_STARTING]);
+    }
+
+    let empty_starting = format!("#{{==:#{{{SIDEBAR_DAEMON_STARTING}}},}}");
+    let set_claim = format!("set -g {SIDEBAR_DAEMON_STARTING} {claim}");
+    let _ = tmux::run_tmux(&["if", "-F", &empty_starting, &set_claim]);
+    tmux::get_option(SIDEBAR_DAEMON_STARTING).as_deref() == Some(claim)
+}
+
+fn clear_daemon_start_claim(claim: &str) {
+    let owns_claim = format!("#{{==:#{{{SIDEBAR_DAEMON_STARTING}}},{claim}}}");
+    let unset_claim = format!("set -gu {SIDEBAR_DAEMON_STARTING}");
+    let _ = tmux::run_tmux(&["if", "-F", &owns_claim, &unset_claim]);
+}
+
+fn starting_claim_is_fresh(claim: &str) -> bool {
+    let Some((_, millis)) = claim.rsplit_once(':') else {
+        return false;
+    };
+    let Ok(millis) = millis.parse::<u128>() else {
+        return false;
+    };
+    now_epoch_ms().saturating_sub(millis) < STARTUP_CLAIM_TTL.as_millis()
+}
+
+fn read_daemon_addr(stdout: impl std::io::Read + Send + 'static) -> Option<String> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        let addr = reader
+            .read_line(&mut line)
+            .ok()
+            .filter(|bytes| *bytes > 0)
+            .map(|_| line.trim().to_string())
+            .filter(|addr| !addr.is_empty());
+        let _ = tx.send(addr);
+    });
+    rx.recv_timeout(READ_TIMEOUT).ok().flatten()
 }
 
 fn run_registered_listener(listener: TcpListener, provider: SnapshotProvider, addr: String) {

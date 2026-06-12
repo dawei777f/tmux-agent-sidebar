@@ -73,7 +73,8 @@ impl AppState {
                     .map(|(p, _)| (p.pane_id.clone(), p.session_id.clone()))
             })
             .collect();
-        self.repo_groups = crate::group::group_panes_by_repo(&sessions);
+        self.repo_groups =
+            crate::group::group_panes_by_repo_with_cache(&sessions, &mut self.git_info_cache);
         if !self.sessions.dirty
             && self
                 .repo_groups
@@ -143,8 +144,9 @@ impl AppState {
         self.auto_switch_tab();
     }
 
-    /// Fast refresh: tmux state + activity log (called every 1s).
-    /// Returns whether the sidebar's window is the active tmux window.
+    /// Fast refresh: tmux state + activity log (called every 1s while visible,
+    /// slower while hidden). Returns whether the sidebar's window is visible in
+    /// an attached tmux session.
     pub fn refresh(&mut self) -> bool {
         self.refresh_now();
         let (focused, window_active, _, _) = tmux::get_sidebar_pane_info(&self.tmux_pane);
@@ -170,6 +172,13 @@ impl AppState {
             self.sessions.dirty = false;
         }
         self.refresh_activity_data();
+        window_active
+    }
+
+    pub fn refresh_visibility(&mut self) -> bool {
+        self.refresh_now();
+        let (focused, window_active, _, _) = tmux::get_sidebar_pane_info(&self.tmux_pane);
+        self.focus_state.sidebar_focused = focused;
         window_active
     }
 

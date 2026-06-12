@@ -17,22 +17,26 @@ pub(super) struct Workers {
     pub session_rx: Receiver<HashMap<String, String>>,
     pub version_rx: Receiver<UpdateNotice>,
     pub git_tab_active: Arc<AtomicBool>,
+    pub sidebar_visible: Arc<AtomicBool>,
 }
 
 /// Spawn the background threads (git polling, session-name polling, version
 /// notice fetch) that feed the event loop.
-pub(super) fn spawn(state: &AppState) -> Workers {
+pub(super) fn spawn(state: &AppState, sidebar_visible: bool) -> Workers {
     let (git_tx, git_rx) = mpsc::channel::<GitData>();
     let (session_tx, session_rx) = mpsc::channel::<HashMap<String, String>>();
     let (version_tx, version_rx) = mpsc::channel::<UpdateNotice>();
     let tmux_pane_clone = state.tmux_pane.clone();
     let git_tab_active = Arc::new(AtomicBool::new(state.bottom_tab == BottomTab::GitStatus));
     let git_tab_flag = Arc::clone(&git_tab_active);
+    let visible = Arc::new(AtomicBool::new(sidebar_visible));
+    let git_visible = Arc::clone(&visible);
+    let session_visible = Arc::clone(&visible);
     std::thread::spawn(move || {
-        git_poll_loop(&tmux_pane_clone, &git_tx, &git_tab_flag);
+        git_poll_loop(&tmux_pane_clone, &git_tx, &git_tab_flag, &git_visible);
     });
     std::thread::spawn(move || {
-        session_poll_loop(&session_tx);
+        session_poll_loop(&session_tx, &session_visible);
     });
     std::thread::spawn(move || {
         if let Some(notice) = version::fetch_update_notice() {
@@ -45,15 +49,20 @@ pub(super) fn spawn(state: &AppState) -> Workers {
         session_rx,
         version_rx,
         git_tab_active,
+        sidebar_visible: visible,
     }
 }
 
 /// Session name polling thread. Scans `~/.claude/sessions/*.json` every 10
 /// seconds so the main TUI thread never performs blocking filesystem I/O
 /// to refresh `/rename`-assigned labels.
-pub(super) fn session_poll_loop(tx: &mpsc::Sender<HashMap<String, String>>) {
+pub(super) fn session_poll_loop(tx: &mpsc::Sender<HashMap<String, String>>, visible: &AtomicBool) {
     loop {
-        std::thread::sleep(Duration::from_secs(10));
+        std::thread::sleep(if visible.load(Ordering::Relaxed) {
+            Duration::from_secs(10)
+        } else {
+            Duration::from_secs(60)
+        });
         let names = session::scan_session_names();
         if tx.send(names).is_err() {
             return;
@@ -66,13 +75,18 @@ pub(super) fn session_poll_loop(tx: &mpsc::Sender<HashMap<String, String>>) {
 /// through an in-memory `(path, branch)`-keyed cache so `gh pr view` (the only
 /// hop that costs GitHub API quota) runs at most once per `PR_CACHE_TTL`
 /// instead of every tick.
-pub(super) fn git_poll_loop(tmux_pane: &str, git_tx: &mpsc::Sender<GitData>, active: &AtomicBool) {
+pub(super) fn git_poll_loop(
+    tmux_pane: &str,
+    git_tx: &mpsc::Sender<GitData>,
+    active: &AtomicBool,
+    visible: &AtomicBool,
+) {
     let mut last_path: Option<String> = None;
     let mut pr_cache = git::PrCache::new();
     loop {
         std::thread::sleep(Duration::from_secs(2));
 
-        if !active.load(Ordering::Relaxed) {
+        if !active.load(Ordering::Relaxed) || !visible.load(Ordering::Relaxed) {
             continue;
         }
 
@@ -103,13 +117,15 @@ mod tests {
     #[test]
     fn test_git_poll_skips_when_inactive() {
         let active = Arc::new(AtomicBool::new(false));
+        let visible = Arc::new(AtomicBool::new(true));
         let (tx, rx) = mpsc::channel::<GitData>();
 
         let flag = Arc::clone(&active);
+        let visible_flag = Arc::clone(&visible);
         let handle = std::thread::spawn(move || {
             // Simulate the poll loop check without actually sleeping 2s
             for _ in 0..3 {
-                if !flag.load(Ordering::Relaxed) {
+                if !flag.load(Ordering::Relaxed) || !visible_flag.load(Ordering::Relaxed) {
                     continue;
                 }
                 let _ = tx.send(GitData::default());
@@ -127,12 +143,14 @@ mod tests {
     #[test]
     fn test_git_poll_sends_when_active() {
         let active = Arc::new(AtomicBool::new(true));
+        let visible = Arc::new(AtomicBool::new(true));
         let (tx, rx) = mpsc::channel::<GitData>();
 
         let flag = Arc::clone(&active);
+        let visible_flag = Arc::clone(&visible);
         let handle = std::thread::spawn(move || {
             // active=true, so it should send
-            if flag.load(Ordering::Relaxed) {
+            if flag.load(Ordering::Relaxed) && visible_flag.load(Ordering::Relaxed) {
                 let _ = tx.send(GitData::default());
             }
         });
@@ -144,6 +162,7 @@ mod tests {
     #[test]
     fn test_git_poll_reacts_to_flag_change() {
         let active = Arc::new(AtomicBool::new(false));
+        let visible = Arc::new(AtomicBool::new(true));
         let (tx, rx) = mpsc::channel::<GitData>();
 
         // Initially inactive
@@ -153,8 +172,9 @@ mod tests {
         active.store(true, Ordering::Relaxed);
 
         let flag = Arc::clone(&active);
+        let visible_flag = Arc::clone(&visible);
         let handle = std::thread::spawn(move || {
-            if flag.load(Ordering::Relaxed) {
+            if flag.load(Ordering::Relaxed) && visible_flag.load(Ordering::Relaxed) {
                 let _ = tx.send(GitData::default());
             }
         });
@@ -169,6 +189,7 @@ mod tests {
     #[test]
     fn test_git_poll_stops_on_sender_closed() {
         let active = AtomicBool::new(true);
+        let visible = AtomicBool::new(true);
         let (tx, rx) = mpsc::channel::<GitData>();
         drop(rx); // Close receiver
 
@@ -177,5 +198,27 @@ mod tests {
 
         // Verify the flag check pattern used in git_poll_loop
         assert!(active.load(Ordering::Relaxed));
+        assert!(visible.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_git_poll_skips_when_hidden() {
+        let active = Arc::new(AtomicBool::new(true));
+        let visible = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel::<GitData>();
+
+        let flag = Arc::clone(&active);
+        let visible_flag = Arc::clone(&visible);
+        let handle = std::thread::spawn(move || {
+            if flag.load(Ordering::Relaxed) && visible_flag.load(Ordering::Relaxed) {
+                let _ = tx.send(GitData::default());
+            }
+        });
+
+        handle.join().unwrap();
+        assert!(
+            rx.try_recv().is_err(),
+            "hidden sidebars should not poll git even when the tab is active"
+        );
     }
 }

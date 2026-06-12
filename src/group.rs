@@ -1,7 +1,11 @@
 use indexmap::IndexMap;
+use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 use crate::git::run_git;
 use crate::tmux::PaneInfo;
+
+const GIT_INFO_CACHE_TTL: Duration = Duration::from_secs(30);
 
 /// Per-pane git metadata resolved from the pane's working directory.
 #[derive(Debug, Clone, Default)]
@@ -21,6 +25,47 @@ pub struct RepoGroup {
     pub has_focus: bool,
     /// Panes in this group, with their git info
     pub panes: Vec<(PaneInfo, PaneGitInfo)>,
+}
+
+#[derive(Debug, Clone)]
+struct CachedPaneGitInfo {
+    info: PaneGitInfo,
+    cached_at: Instant,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct PaneGitInfoCache {
+    entries: HashMap<String, CachedPaneGitInfo>,
+}
+
+impl PaneGitInfoCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn get_or_resolve(&mut self, path: &str, now: Instant) -> PaneGitInfo {
+        if let Some(entry) = self.entries.get(path)
+            && now.duration_since(entry.cached_at) < GIT_INFO_CACHE_TTL
+        {
+            return entry.info.clone();
+        }
+
+        let info = resolve_pane_git_info(path);
+        self.entries.insert(
+            path.to_string(),
+            CachedPaneGitInfo {
+                info: info.clone(),
+                cached_at: now,
+            },
+        );
+        info
+    }
+
+    fn retain_paths<'a>(&mut self, paths: impl Iterator<Item = &'a str>) {
+        let live_paths: HashSet<&str> = paths.collect();
+        self.entries
+            .retain(|path, _| live_paths.contains(path.as_str()));
+    }
 }
 
 /// Resolve git info for a single pane path.
@@ -82,9 +127,25 @@ pub fn resolve_pane_git_info(path: &str) -> PaneGitInfo {
 /// Returns groups sorted alphabetically by display name (case-insensitive),
 /// so the order is stable regardless of which pane is encountered first.
 pub fn group_panes_by_repo(sessions: &[crate::tmux::SessionInfo]) -> Vec<RepoGroup> {
+    let mut cache = PaneGitInfoCache::new();
+    group_panes_by_repo_with_cache(sessions, &mut cache)
+}
+
+pub fn group_panes_by_repo_with_cache(
+    sessions: &[crate::tmux::SessionInfo],
+    cache: &mut PaneGitInfoCache,
+) -> Vec<RepoGroup> {
     let mut groups: IndexMap<String, RepoGroup> = IndexMap::new();
     let mut git_cache: std::collections::HashMap<String, PaneGitInfo> =
         std::collections::HashMap::new();
+    let now = Instant::now();
+    cache.retain_paths(
+        sessions
+            .iter()
+            .flat_map(|session| session.windows.iter())
+            .flat_map(|window| window.panes.iter())
+            .map(|pane| pane.path.as_str()),
+    );
 
     for session in sessions {
         for window in &session.windows {
@@ -95,7 +156,7 @@ pub fn group_panes_by_repo(sessions: &[crate::tmux::SessionInfo]) -> Vec<RepoGro
                 let mut git_info = match git_cache.get(pane.path.as_str()) {
                     Some(cached) => cached.clone(),
                     None => {
-                        let resolved = resolve_pane_git_info(&pane.path);
+                        let resolved = cache.get_or_resolve(&pane.path, now);
                         git_cache.insert(pane.path.clone(), resolved.clone());
                         resolved
                     }
