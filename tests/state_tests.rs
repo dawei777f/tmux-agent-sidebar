@@ -869,18 +869,18 @@ fn agent_cycle_keeps_mode_in_bounds_for_codex() {
 }
 
 #[test]
-fn open_remove_confirm_for_unknown_pane_sets_flash_and_keeps_popup_closed() {
+fn open_remove_confirm_for_unknown_pane_flashes_when_session_cannot_be_resolved() {
     // Without a real tmux environment `display_message` returns an
-    // empty string, so the "not spawned" branch should fire, set the
-    // flash banner, and leave the popup state untouched.
+    // empty string. Non-spawned panes now fall through to the session-kill
+    // path, which must fail closed when tmux cannot resolve the session.
     let mut state = make_state(vec![]);
     assert!(state.flash.is_none());
     state.open_remove_confirm_for_pane("%nonexistent".into());
     assert!(matches!(state.popup, PopupState::None));
     let flash = state.flash.as_ref().expect("flash must be set");
     assert!(
-        flash.0.contains("not spawned"),
-        "flash should mention the unspawned pane: {:?}",
+        flash.0.contains("could not resolve tmux session"),
+        "flash should mention the missing tmux session: {:?}",
         flash.0
     );
 }
@@ -890,8 +890,8 @@ fn handle_mouse_click_routes_spawn_remove_targets_to_open_remove_confirm() {
     // Stuff a synthetic × click target into layout.spawn_remove_targets
     // and verify the click handler routes to
     // `open_remove_confirm_for_pane`. Without a tmux env the call
-    // flashes "not spawned", which still proves the routing worked
-    // (otherwise flash would stay None).
+    // flashes "could not resolve tmux session", which still proves the
+    // routing worked (otherwise flash would stay None).
     use tmux_agent_sidebar::state::SpawnRemoveTarget;
     let mut state = make_state(vec![]);
     state.layout.spawn_remove_targets = vec![SpawnRemoveTarget {
@@ -901,7 +901,7 @@ fn handle_mouse_click_routes_spawn_remove_targets_to_open_remove_confirm() {
     state.handle_mouse_click(5, 5);
     let flash = state.flash.as_ref().expect("click should have fired");
     assert!(
-        flash.0.contains("not spawned"),
+        flash.0.contains("could not resolve tmux session"),
         "click on × target should call open_remove_confirm_for_pane: {:?}",
         flash.0
     );

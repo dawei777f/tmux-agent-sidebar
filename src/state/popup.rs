@@ -423,9 +423,9 @@ impl AppState {
         }
     }
 
-    /// Open the remove confirmation popup for the currently selected pane,
-    /// but only if it was created by the sidebar's spawn flow. Otherwise
-    /// flashes an error so the user knows nothing happened.
+    /// Open the remove confirmation popup for a sidebar-spawned worktree.
+    /// Non-spawned panes are owned outside the sidebar worktree flow, so `x`
+    /// closes their containing tmux session directly.
     pub fn open_remove_confirm(&mut self) {
         let Some(pane) = self.selected_pane() else {
             self.set_flash("remove: no pane selected");
@@ -437,7 +437,16 @@ impl AppState {
     pub fn open_remove_confirm_for_pane(&mut self, pane_id: String) {
         let markers = crate::worktree::read_spawn_markers(&pane_id);
         if !markers.is_spawned() {
-            self.set_flash("remove: selected pane was not spawned by sidebar");
+            let Some(session_id) = crate::tmux::pane_tmux_session_id(&pane_id) else {
+                self.set_flash("remove: could not resolve tmux session");
+                return;
+            };
+            match crate::tmux::kill_session(&session_id) {
+                Ok(_) => {
+                    self.popup = PopupState::None;
+                }
+                Err(e) => self.set_flash(format!("remove: failed to kill session: {e}")),
+            }
             return;
         }
         let branch = std::path::Path::new(&markers.worktree_path)
@@ -863,5 +872,180 @@ mod tests {
         state.open_remove_confirm();
         assert!(state.take_flash().is_some());
         assert!(!state.is_remove_confirm_open());
+    }
+
+    #[test]
+    fn open_remove_confirm_for_unspawned_pane_kills_tmux_session() {
+        let _guard = crate::tmux::command_test_mock::install();
+        crate::tmux::command_test_mock::add_success(
+            &[
+                "display-message",
+                "-t",
+                "%42",
+                "-p",
+                &crate::worktree::spawn_markers_template(),
+            ],
+            "",
+        );
+        crate::tmux::command_test_mock::add_success(
+            &["display-message", "-t", "%42", "-p", "#{session_id}"],
+            "$7\n",
+        );
+        crate::tmux::command_test_mock::add_success(&["kill-session", "-t", "$7"], "");
+
+        let mut state = AppState::new("%99".into());
+        state.popup = PopupState::Notices { area: None };
+        state.open_remove_confirm_for_pane("%42".into());
+
+        assert!(matches!(state.popup, PopupState::None));
+        assert!(state.flash.is_none());
+        let commands = crate::tmux::command_test_mock::commands()
+            .into_iter()
+            .map(|cmd| cmd.args)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            commands,
+            vec![
+                vec![
+                    "display-message",
+                    "-t",
+                    "%42",
+                    "-p",
+                    &crate::worktree::spawn_markers_template(),
+                ],
+                vec!["display-message", "-t", "%42", "-p", "#{session_id}"],
+                vec!["kill-session", "-t", "$7"],
+            ]
+        );
+    }
+
+    #[test]
+    fn open_remove_confirm_for_unspawned_pane_flashes_when_session_missing() {
+        let _guard = crate::tmux::command_test_mock::install();
+        crate::tmux::command_test_mock::add_success(
+            &[
+                "display-message",
+                "-t",
+                "%42",
+                "-p",
+                &crate::worktree::spawn_markers_template(),
+            ],
+            "",
+        );
+        crate::tmux::command_test_mock::add_success(
+            &["display-message", "-t", "%42", "-p", "#{session_id}"],
+            "",
+        );
+
+        let mut state = AppState::new("%99".into());
+        state.open_remove_confirm_for_pane("%42".into());
+
+        assert!(matches!(state.popup, PopupState::None));
+        assert_eq!(
+            state.take_flash().as_deref(),
+            Some("remove: could not resolve tmux session")
+        );
+        let commands = crate::tmux::command_test_mock::commands()
+            .into_iter()
+            .map(|cmd| cmd.args)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            commands,
+            vec![
+                vec![
+                    "display-message",
+                    "-t",
+                    "%42",
+                    "-p",
+                    &crate::worktree::spawn_markers_template(),
+                ],
+                vec!["display-message", "-t", "%42", "-p", "#{session_id}"],
+            ]
+        );
+    }
+
+    #[test]
+    fn open_remove_confirm_for_unspawned_pane_flashes_when_kill_fails() {
+        let _guard = crate::tmux::command_test_mock::install();
+        crate::tmux::command_test_mock::add_success(
+            &[
+                "display-message",
+                "-t",
+                "%42",
+                "-p",
+                &crate::worktree::spawn_markers_template(),
+            ],
+            "",
+        );
+        crate::tmux::command_test_mock::add_success(
+            &["display-message", "-t", "%42", "-p", "#{session_id}"],
+            "$7\n",
+        );
+        crate::tmux::command_test_mock::add_failure(
+            &["kill-session", "-t", "$7"],
+            "can't find session: $7",
+        );
+
+        let mut state = AppState::new("%99".into());
+        state.open_remove_confirm_for_pane("%42".into());
+
+        assert!(matches!(state.popup, PopupState::None));
+        let flash = state.take_flash().expect("kill failure must flash");
+        assert!(
+            flash.contains("failed to kill session"),
+            "flash should explain kill-session failure: {flash:?}"
+        );
+        assert!(
+            flash.contains("can't find session"),
+            "flash should include tmux stderr: {flash:?}"
+        );
+    }
+
+    #[test]
+    fn open_remove_confirm_for_spawned_pane_opens_worktree_remove_popup() {
+        let _guard = crate::tmux::command_test_mock::install();
+        crate::tmux::command_test_mock::add_success(
+            &[
+                "display-message",
+                "-t",
+                "%42",
+                "-p",
+                &crate::worktree::spawn_markers_template(),
+            ],
+            "1\n/repo\n/repo/.worktrees/task-a\nagent/task-a\n@9\n",
+        );
+
+        let mut state = AppState::new("%99".into());
+        state.open_remove_confirm_for_pane("%42".into());
+
+        match &state.popup {
+            PopupState::RemoveConfirm {
+                pane_id,
+                branch,
+                error,
+                area,
+            } => {
+                assert_eq!(pane_id, "%42");
+                assert_eq!(branch, "task-a");
+                assert!(error.is_none());
+                assert!(area.is_none());
+            }
+            other => panic!("expected RemoveConfirm popup, got {other:?}"),
+        }
+        assert!(state.flash.is_none());
+        let commands = crate::tmux::command_test_mock::commands()
+            .into_iter()
+            .map(|cmd| cmd.args)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            commands,
+            vec![vec![
+                "display-message",
+                "-t",
+                "%42",
+                "-p",
+                &crate::worktree::spawn_markers_template(),
+            ]]
+        );
     }
 }

@@ -5,8 +5,8 @@ mod query;
 mod types;
 
 pub use commands::{
-    display_message, kill_window, new_window, pane_session_name, run_tmux, run_tmux_capture,
-    select_pane, send_command, set_window_option,
+    display_message, kill_session, kill_window, new_window, pane_session_name,
+    pane_tmux_session_id, run_tmux, run_tmux_capture, select_pane, send_command, set_window_option,
 };
 pub use options::{
     BG_CMD_PLACEHOLDER, PANE_AGENT, PANE_ATTENTION, PANE_BG_CMD, PANE_CWD, PANE_NAME,
@@ -42,5 +42,7 @@ pub use types::{
     SessionInfo, WindowInfo, WorktreeMetadata,
 };
 
+#[cfg(test)]
+pub(crate) use commands::test_mock as command_test_mock;
 #[cfg(test)]
 pub use options::test_mock;
