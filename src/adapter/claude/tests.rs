@@ -18,7 +18,6 @@ fn session_start() {
             cwd: "/home/user".into(),
             permission_mode: "default".into(),
             source: "".into(),
-            worktree: None,
             agent_id: None,
             session_id: None,
         }
@@ -77,7 +76,6 @@ fn user_prompt_submit() {
             cwd: "/tmp".into(),
             permission_mode: "auto".into(),
             prompt: "fix bug".into(),
-            worktree: None,
             agent_id: None,
             session_id: None,
         }
@@ -98,7 +96,6 @@ fn notification() {
             permission_mode: "default".into(),
             wait_reason: "permission".into(),
             meta_only: false,
-            worktree: None,
             agent_id: None,
             session_id: None,
         }
@@ -119,7 +116,6 @@ fn notification_idle_prompt_is_meta_only() {
             permission_mode: "default".into(),
             wait_reason: "idle_prompt".into(),
             meta_only: true,
-            worktree: None,
             agent_id: None,
             session_id: None,
         }
@@ -140,7 +136,6 @@ fn stop() {
             permission_mode: "default".into(),
             last_message: "done".into(),
             response: None,
-            worktree: None,
             agent_id: None,
             session_id: None,
         }
@@ -159,7 +154,6 @@ fn stop_failure_upstream_error_type_field() {
             cwd: "/tmp".into(),
             permission_mode: "default".into(),
             error: "rate_limit".into(),
-            worktree: None,
             agent_id: None,
             session_id: None,
         }
@@ -178,7 +172,6 @@ fn stop_failure_legacy_error_field() {
             cwd: "/tmp".into(),
             permission_mode: "default".into(),
             error: "rate_limit".into(),
-            worktree: None,
             agent_id: None,
             session_id: None,
         }
@@ -197,7 +190,6 @@ fn stop_failure_falls_back_to_error_message() {
             cwd: "/tmp".into(),
             permission_mode: "default".into(),
             error: "something went wrong".into(),
-            worktree: None,
             agent_id: None,
             session_id: None,
         }
@@ -216,7 +208,6 @@ fn stop_failure_falls_back_to_error_details() {
             cwd: "/tmp".into(),
             permission_mode: "default".into(),
             error: "something went wrong".into(),
-            worktree: None,
             agent_id: None,
             session_id: None,
         }
@@ -537,7 +528,6 @@ fn notification_empty_reason() {
             permission_mode: "default".into(),
             wait_reason: "".into(),
             meta_only: false,
-            worktree: None,
             agent_id: None,
             session_id: None,
         }
@@ -595,7 +585,6 @@ fn stop_failure_error_type_takes_priority_over_legacy() {
             cwd: "/tmp".into(),
             permission_mode: "default".into(),
             error: "rate_limit".into(),
-            worktree: None,
             agent_id: None,
             session_id: None,
         }
@@ -614,7 +603,6 @@ fn stop_failure_both_empty() {
             cwd: "/tmp".into(),
             permission_mode: "default".into(),
             error: "".into(),
-            worktree: None,
             agent_id: None,
             session_id: None,
         }
@@ -634,7 +622,6 @@ fn stop_empty_last_message() {
             permission_mode: "default".into(),
             last_message: "".into(),
             response: None,
-            worktree: None,
             agent_id: None,
             session_id: None,
         }
@@ -642,45 +629,29 @@ fn stop_empty_last_message() {
 }
 
 #[test]
-fn session_start_with_worktree_and_agent_id() {
+fn session_start_keeps_agent_id() {
     let adapter = ClaudeAdapter;
     let input = json!({
-        "cwd": "/tmp/wt",
+        "cwd": "/tmp/project",
         "permission_mode": "auto",
-        "agent_id": "abc-123",
-        "worktree": {
-            "name": "feat-wt",
-            "path": "/tmp/wt",
-            "branch": "feat",
-            "originalRepoDir": "/home/user/repo"
-        }
+        "agent_id": "abc-123"
     });
     let event = adapter.parse("session-start", &input).unwrap();
     match event {
-        AgentEvent::SessionStart {
-            worktree, agent_id, ..
-        } => {
-            let wt = worktree.unwrap();
-            assert_eq!(wt.name, "feat-wt");
-            assert_eq!(wt.path, "/tmp/wt");
-            assert_eq!(wt.branch, "feat");
-            assert_eq!(wt.original_repo_dir, "/home/user/repo");
-            assert_eq!(agent_id.unwrap(), "abc-123");
+        AgentEvent::SessionStart { agent_id, .. } => {
+            assert_eq!(agent_id.as_deref(), Some("abc-123"));
         }
         _ => panic!("wrong variant"),
     }
 }
 
 #[test]
-fn session_start_without_worktree_fields() {
+fn session_start_without_agent_id() {
     let adapter = ClaudeAdapter;
     let input = json!({"cwd": "/tmp", "permission_mode": "default"});
     let event = adapter.parse("session-start", &input).unwrap();
     match event {
-        AgentEvent::SessionStart {
-            worktree, agent_id, ..
-        } => {
-            assert!(worktree.is_none());
+        AgentEvent::SessionStart { agent_id, .. } => {
             assert!(agent_id.is_none());
         }
         _ => panic!("wrong variant"),
@@ -702,7 +673,6 @@ fn permission_denied_event() {
             agent: "claude".into(),
             cwd: "/tmp".into(),
             permission_mode: "auto".into(),
-            worktree: None,
             agent_id: None,
             session_id: None,
         }
@@ -718,7 +688,6 @@ fn cwd_changed_event() {
         event,
         AgentEvent::CwdChanged {
             cwd: "/new/path".into(),
-            worktree: None,
             agent_id: None,
             session_id: None,
         }
@@ -726,49 +695,13 @@ fn cwd_changed_event() {
 }
 
 #[test]
-fn cwd_changed_with_worktree() {
+fn cwd_changed_keeps_cwd() {
     let adapter = ClaudeAdapter;
-    let input = json!({
-        "cwd": "/tmp/wt/src",
-        "worktree": {
-            "name": "wt",
-            "path": "/tmp/wt",
-            "branch": "main",
-            "originalRepoDir": "/home/user/repo"
-        }
-    });
+    let input = json!({"cwd": "/tmp/project/src"});
     let event = adapter.parse("cwd-changed", &input).unwrap();
     match event {
-        AgentEvent::CwdChanged { cwd, worktree, .. } => {
-            assert_eq!(cwd, "/tmp/wt/src");
-            let wt = worktree.unwrap();
-            assert_eq!(wt.original_repo_dir, "/home/user/repo");
-        }
-        _ => panic!("wrong variant"),
-    }
-}
-
-#[test]
-fn parse_worktree_empty_object_returns_none() {
-    let adapter = ClaudeAdapter;
-    let input = json!({"cwd": "/tmp", "permission_mode": "default", "worktree": {}});
-    let event = adapter.parse("session-start", &input).unwrap();
-    match event {
-        AgentEvent::SessionStart { worktree, .. } => {
-            assert!(worktree.is_none(), "empty worktree object should be None");
-        }
-        _ => panic!("wrong variant"),
-    }
-}
-
-#[test]
-fn parse_worktree_non_object_returns_none() {
-    let adapter = ClaudeAdapter;
-    let input = json!({"cwd": "/tmp", "permission_mode": "default", "worktree": "not-an-object"});
-    let event = adapter.parse("session-start", &input).unwrap();
-    match event {
-        AgentEvent::SessionStart { worktree, .. } => {
-            assert!(worktree.is_none(), "non-object worktree should be None");
+        AgentEvent::CwdChanged { cwd, .. } => {
+            assert_eq!(cwd, "/tmp/project/src");
         }
         _ => panic!("wrong variant"),
     }
@@ -785,7 +718,6 @@ fn session_start_missing_fields_default_to_empty() {
             cwd: "".into(),
             permission_mode: "".into(),
             source: "".into(),
-            worktree: None,
             agent_id: None,
             session_id: None,
         }

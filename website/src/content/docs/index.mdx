@@ -1,9 +1,9 @@
 ---
 title: tmux-agent-sidebar
-description: tmux-agent-sidebar — one tmux sidebar that tracks every Claude Code, Codex, and OpenCode pane across every session and window. See status, background shells, prompts, Git state, activity, and worktrees without switching windows.
+description: tmux-agent-sidebar — one rmux sidebar that tracks every Claude Code, Codex, and OpenCode pane across every session and window. See status, background shells, prompts, activity, wait reasons, task progress, and subagents without switching windows.
 template: splash
 hero:
-  tagline: 'Every <span class="hero-agent"><img src="/tmux-agent-sidebar/brands/claude.ico" alt="" aria-hidden="true" width="16" height="16" />Claude Code</span>, <span class="hero-agent"><img src="/tmux-agent-sidebar/brands/codex.png" alt="" aria-hidden="true" width="16" height="16" />Codex</span>, and <span class="hero-agent"><img src="/tmux-agent-sidebar/brands/opencode.svg" alt="" aria-hidden="true" width="16" height="20" />OpenCode</span> pane across every tmux session and window — status, background shells, prompts, Git, and activity in one sidebar.'
+  tagline: 'Every <span class="hero-agent"><img src="/tmux-agent-sidebar/brands/claude.ico" alt="" aria-hidden="true" width="16" height="16" />Claude Code</span>, <span class="hero-agent"><img src="/tmux-agent-sidebar/brands/codex.png" alt="" aria-hidden="true" width="16" height="16" />Codex</span>, and <span class="hero-agent"><img src="/tmux-agent-sidebar/brands/opencode.svg" alt="" aria-hidden="true" width="16" height="20" />OpenCode</span> pane across every rmux session and window — status, background shells, prompts, and activity in one sidebar.'
   image:
     alt: tmux-agent-sidebar screenshot
     file: ../../assets/captures/hero.png
@@ -24,33 +24,29 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 
 <CardGrid>
   <Card title="One sidebar, every pane" icon="list-format">
-    Tracks Claude Code, Codex, and OpenCode panes across every tmux session and window at
+    Tracks Claude Code, Codex, and OpenCode panes across every rmux session and window at
     once, so context switching stops meaning window switching.
   </Card>
   <Card title="Live status, prompts, responses" icon="comment-alt">
     Prompts, tool calls, response previews, background shell state, wait reasons,
     task progress, and subagent trees — all refreshing as the agents work.
   </Card>
-  <Card title="Worktree-aware" icon="seti:folder">
-    Spawn a fresh worktree + agent from the sidebar, and tear it down —
-    window, worktree, and branch — in a single keystroke.
-  </Card>
-  <Card title="Desktop notifications" icon="signal">
-    Native notifications when an agent finishes, needs a permission, or
-    errors out. Configurable per event.
+  <Card title="Rmux API native" icon="terminal">
+    Sidebar multiplexer operations go through rmux Rust APIs, including pane
+    input through the SDK broadcast path.
   </Card>
 </CardGrid>
 
 ## Quick start
 
-Using [TPM](https://github.com/tmux-plugins/tpm):
+Using an rmux plugin manager:
 
 ```bash
 set -g @plugin 'hiroppy/tmux-agent-sidebar'
 ```
 
-Reload with `tmux source ~/.tmux.conf`, press `prefix + I` to install, and the
-install wizard downloads a pre-built binary or builds from source.
+Reload your rmux config, press `prefix + I` to install, and the install wizard
+downloads a pre-built binary or builds from source.
 
 Next, wire up your agent hooks — [Claude Code](/tmux-agent-sidebar/getting-started/claude-code/)
 installs as a plugin, [Codex](/tmux-agent-sidebar/getting-started/codex/) is a

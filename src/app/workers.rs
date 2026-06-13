@@ -6,36 +6,26 @@ use std::time::Duration;
 
 use crate::session;
 use crate::state::AppState;
-use crate::version::{self, UpdateNotice};
 
 /// Channels and shared flags produced by [`spawn`] that the main event loop
 /// drains every tick.
 pub(super) struct Workers {
     pub session_rx: Receiver<HashMap<String, String>>,
-    pub version_rx: Receiver<UpdateNotice>,
     pub sidebar_visible: Arc<AtomicBool>,
 }
 
-/// Spawn the background threads (session-name polling, version notice fetch)
-/// that feed the event loop.
+/// Spawn the background thread that feeds the event loop.
 pub(super) fn spawn(state: &AppState, sidebar_visible: bool) -> Workers {
     let (session_tx, session_rx) = mpsc::channel::<HashMap<String, String>>();
-    let (version_tx, version_rx) = mpsc::channel::<UpdateNotice>();
     let visible = Arc::new(AtomicBool::new(sidebar_visible));
     let session_visible = Arc::clone(&visible);
     let _ = state;
     std::thread::spawn(move || {
         session_poll_loop(&session_tx, &session_visible);
     });
-    std::thread::spawn(move || {
-        if let Some(notice) = version::fetch_update_notice() {
-            let _ = version_tx.send(notice);
-        }
-    });
 
     Workers {
         session_rx,
-        version_rx,
         sidebar_visible: visible,
     }
 }

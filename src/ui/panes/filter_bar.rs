@@ -107,9 +107,6 @@ pub(super) fn render_secondary_header<'a>(
 }
 
 #[cfg(test)]
-use crate::group::PaneGitInfo;
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use ratatui::style::Modifier;
@@ -122,17 +119,14 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_secondary_header_omits_version_banner_when_notice_present() {
-        // Version notices light up the `ⓘ` indicator in the header but
-        // must not leak the "new release vX.Y.Z" banner into the row —
-        // the banner lives in the popup, not the header. A snapshot here
-        // catches any regression that would put banner text back on the
-        // row, including subtle width or spacing drift.
+    fn snapshot_secondary_header_omits_missing_hooks_details_when_notice_present() {
+        // Missing-hook notices light up the `ⓘ` indicator in the header but
+        // must not leak hook details into the row — details live in the popup.
         let mut state = crate::state::AppState::new(String::new());
-        state.version_notice = Some(crate::version::UpdateNotice {
-            local_version: "0.2.6".into(),
-            latest_version: "0.2.7".into(),
-        });
+        state.notices.missing_hook_groups = vec![crate::state::NoticesMissingHookGroup {
+            agent: "claude".into(),
+            hooks: vec!["SessionStart".into()],
+        }];
 
         let text = line_text(&render_secondary_header(&state, 30).0);
         insta::assert_snapshot!(text, @"ⓘ                          — ▾");
@@ -141,10 +135,6 @@ mod tests {
     #[test]
     fn render_secondary_header_keeps_repo_position_with_or_without_notices_info() {
         let mut with_info = AppState::new(String::new());
-        with_info.version_notice = Some(crate::version::UpdateNotice {
-            local_version: "0.2.6".into(),
-            latest_version: "0.2.7".into(),
-        });
         with_info.notices.missing_hook_groups = vec![crate::state::NoticesMissingHookGroup {
             agent: "claude".into(),
             hooks: vec!["SessionStart".into()],
@@ -167,12 +157,10 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_secondary_header_with_version_only() {
+    fn snapshot_secondary_header_with_plugin_notice_only() {
         let mut state = AppState::new(String::new());
-        state.version_notice = Some(crate::version::UpdateNotice {
-            local_version: "0.2.6".into(),
-            latest_version: "0.2.7".into(),
-        });
+        state.notices.claude_plugin_notice =
+            Some(crate::state::ClaudePluginNotice::InstallRecommended);
         let text = line_text(&render_secondary_header(&state, 30).0);
         insta::assert_snapshot!(text, @"ⓘ                          — ▾");
     }
@@ -189,12 +177,10 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_secondary_header_with_version_and_hooks() {
+    fn snapshot_secondary_header_with_plugin_and_hooks() {
         let mut state = AppState::new(String::new());
-        state.version_notice = Some(crate::version::UpdateNotice {
-            local_version: "0.2.6".into(),
-            latest_version: "0.2.7".into(),
-        });
+        state.notices.claude_plugin_notice =
+            Some(crate::state::ClaudePluginNotice::InstallRecommended);
         state.notices.missing_hook_groups = vec![crate::state::NoticesMissingHookGroup {
             agent: "claude".into(),
             hooks: vec!["SessionStart".into()],
@@ -244,10 +230,8 @@ mod tests {
             permission_mode: crate::tmux::PermissionMode::Default,
             subagents: vec![],
             pane_pid: None,
-            worktree: crate::tmux::WorktreeMetadata::default(),
             session_id: None,
             session_name: String::new(),
-            sidebar_spawned: false,
             bg_shell_cmd: None,
         };
         let pane2 = crate::tmux::PaneInfo {
@@ -265,19 +249,14 @@ mod tests {
             permission_mode: crate::tmux::PermissionMode::Default,
             subagents: vec![],
             pane_pid: None,
-            worktree: crate::tmux::WorktreeMetadata::default(),
             session_id: None,
             session_name: String::new(),
-            sidebar_spawned: false,
             bg_shell_cmd: None,
         };
         let mut state = make_state_with_groups(vec![crate::group::RepoGroup {
             name: "project".into(),
             has_focus: true,
-            panes: vec![
-                (pane1, PaneGitInfo::default()),
-                (pane2, PaneGitInfo::default()),
-            ],
+            panes: vec![pane1, pane2],
         }]);
         state.global.status_filter = StatusFilter::Running;
         let theme = &state.theme;

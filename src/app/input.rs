@@ -4,7 +4,6 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, Mous
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::state::{AppState, Focus};
-use crate::worktree::RemoveMode;
 
 /// Dispatch a single crossterm [`Event`] into the [`AppState`], returning
 /// `true` when a redraw should be scheduled.
@@ -49,31 +48,6 @@ pub(super) fn handle_key_event(key: KeyEvent, state: &mut AppState) -> bool {
         }
         return true;
     }
-    if state.is_spawn_input_open() {
-        match key.code {
-            KeyCode::Esc => state.close_spawn_input(),
-            KeyCode::Enter => state.confirm_spawn_input(),
-            KeyCode::Tab | KeyCode::Down => state.spawn_input_next_field(),
-            KeyCode::BackTab | KeyCode::Up => state.spawn_input_prev_field(),
-            KeyCode::Left => state.spawn_input_cycle(-1),
-            KeyCode::Right => state.spawn_input_cycle(1),
-            KeyCode::Backspace => state.spawn_input_pop_char(),
-            KeyCode::Char(c) => state.spawn_input_push_char(c),
-            _ => {}
-        }
-        return true;
-    }
-    if state.is_remove_confirm_open() {
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('n') => state.close_remove_confirm(),
-            KeyCode::Char('c') => state.confirm_remove(RemoveMode::WindowOnly),
-            KeyCode::Enter | KeyCode::Char('y') => {
-                state.confirm_remove(RemoveMode::WindowAndWorktree)
-            }
-            _ => {}
-        }
-        return true;
-    }
     if state.is_repo_popup_open() {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
@@ -115,16 +89,6 @@ pub(super) fn handle_key_event(key: KeyEvent, state: &mut AppState) -> bool {
         KeyCode::Char('r') => {
             if state.focus_state.focus == Focus::Filter {
                 state.toggle_repo_popup();
-            }
-        }
-        KeyCode::Char('n') => {
-            if state.focus_state.focus == Focus::Panes {
-                state.open_spawn_input_from_selection();
-            }
-        }
-        KeyCode::Char('x') => {
-            if state.focus_state.focus == Focus::Panes {
-                state.open_remove_confirm();
             }
         }
         KeyCode::Enter => {
@@ -270,10 +234,7 @@ mod tests {
 
     #[test]
     fn bare_n_does_not_move_selection() {
-        // The bare `n` arm is wired to the spawn input flow, not navigation.
-        // We don't assert the popup opens (that requires repo_groups +
-        // git metadata, exercised elsewhere) — only that it does NOT
-        // shadow the Ctrl-N navigation arm.
+        // Bare `n` is intentionally inert; Ctrl-N owns next-row navigation.
         let mut state = state_with_three_panes();
         handle_key_event(key(KeyCode::Char('n')), &mut state);
         assert_eq!(state.global.selected_pane_row, 0);

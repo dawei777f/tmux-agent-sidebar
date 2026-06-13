@@ -5,7 +5,6 @@ use crate::ui::colors::ColorTheme;
 use crate::ui::icons::StatusIcons;
 
 mod body;
-mod branch;
 mod ctx;
 mod status;
 
@@ -13,19 +12,14 @@ use body::{
     background_hint_row, idle_hint_row, prompt_rows, subagent_rows, task_progress_row,
     wait_reason_row,
 };
-use branch::branch_ports_row;
 use ctx::{RowCtx, SELECTION_MARKER};
 #[cfg(test)]
 use status::running_icon_for;
 use status::status_row;
 
-pub(super) use branch::sidebar_remove_marker_col;
-
 #[allow(clippy::too_many_arguments)]
-pub(super) fn render_pane_lines_with_ports(
+pub(super) fn render_pane_lines(
     pane: &crate::tmux::PaneInfo,
-    git_info: &crate::group::PaneGitInfo,
-    ports: Option<&[u16]>,
     task_progress: Option<&crate::activity::TaskProgress>,
     selected: bool,
     active: bool,
@@ -46,8 +40,8 @@ pub(super) fn render_pane_lines_with_ports(
     };
     // The left marker `┃` highlights the pane that is currently focused in
     // tmux (`active`). To keep the active accent compact, it only appears on
-    // the status row and the branch/ports row (when present) — never on
-    // deeper details like task progress or prompt wrapping. The sidebar
+    // the status row — never on deeper details like task progress or prompt
+    // wrapping. The sidebar
     // cursor position (`selected`) still paints the full pane with the
     // selection background.
     let marker_ctx = RowCtx {
@@ -73,9 +67,6 @@ pub(super) fn render_pane_lines_with_ports(
 
     let mut out: Vec<Line<'static>> = Vec::with_capacity(8);
     out.push(status_row(pane, &marker_ctx, icons, spinner_frame, now));
-    if let Some(line) = branch_ports_row(git_info, ports, pane.sidebar_spawned, &marker_ctx) {
-        out.push(line);
-    }
     let ctx = &plain_ctx;
     if let Some(line) = task_progress_row(task_progress, ctx) {
         out.push(line);
@@ -98,8 +89,7 @@ pub(super) fn render_pane_lines_with_ports(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::group::PaneGitInfo;
-    use crate::tmux::{AgentType, PaneInfo, PermissionMode, WorktreeMetadata};
+    use crate::tmux::{AgentType, PaneInfo, PermissionMode};
     use crate::ui::icons::StatusIcons;
     use crate::ui::text::display_width;
     use ratatui::style::{Color, Modifier};
@@ -129,10 +119,8 @@ mod tests {
             permission_mode,
             subagents: vec![],
             pane_pid: None,
-            worktree: WorktreeMetadata::default(),
             session_id: None,
             session_name: String::new(),
-            sidebar_spawned: false,
             bg_shell_cmd: None,
         }
     }
@@ -159,10 +147,8 @@ mod tests {
     fn render_pane_lines_shows_permission_badge() {
         let theme = ColorTheme::default();
         let pane = pane(PermissionMode::Auto, PaneStatus::Running, "");
-        let lines = render_pane_lines_with_ports(
+        let lines = render_pane_lines(
             &pane,
-            &PaneGitInfo::default(),
-            None,
             None,
             false,
             false,
@@ -181,10 +167,8 @@ mod tests {
     fn render_pane_lines_shows_defer_badge() {
         let theme = ColorTheme::default();
         let pane = pane(PermissionMode::Defer, PaneStatus::Running, "");
-        let lines = render_pane_lines_with_ports(
+        let lines = render_pane_lines(
             &pane,
-            &PaneGitInfo::default(),
-            None,
             None,
             false,
             false,
@@ -207,10 +191,8 @@ mod tests {
         let theme = ColorTheme::default();
         let mut p = pane(PermissionMode::Default, PaneStatus::Running, "");
         p.session_name = "fix-csv-aliases".into();
-        let lines = render_pane_lines_with_ports(
+        let lines = render_pane_lines(
             &p,
-            &PaneGitInfo::default(),
-            None,
             None,
             false,
             false,
@@ -244,10 +226,8 @@ mod tests {
         // started_at must be > 0 for elapsed_label to render.
         // started_at=1, now=66 → elapsed=65s → "1m5s".
         p.started_at = Some(1);
-        let lines = render_pane_lines_with_ports(
+        let lines = render_pane_lines(
             &p,
-            &PaneGitInfo::default(),
-            None,
             None,
             false,
             false,
@@ -280,82 +260,12 @@ mod tests {
     }
 
     #[test]
-    fn render_pane_lines_shows_branch_and_ports_on_same_row() {
-        let theme = ColorTheme::default();
-        let pane = pane(PermissionMode::Default, PaneStatus::Running, "");
-        let ports = vec![3000, 5173];
-        let lines = render_pane_lines_with_ports(
-            &pane,
-            &PaneGitInfo {
-                repo_root: Some("/tmp/project".into()),
-                branch: Some("feature/sidebar".into()),
-                is_worktree: false,
-                worktree_name: None,
-            },
-            Some(&ports),
-            None,
-            false,
-            false,
-            40,
-            &StatusIcons::default(),
-            &theme,
-            0,
-            0,
-        );
-
-        assert!(lines.len() >= 2);
-        let branch_port_line = line_text(&lines[1]);
-        assert!(branch_port_line.contains("feature/sidebar"));
-        assert!(branch_port_line.contains(":3000, 5173"));
-        assert!(branch_port_line.find("feature/sidebar") < branch_port_line.find(":3000, 5173"));
-    }
-
-    #[test]
-    fn render_pane_lines_truncates_long_branch_when_ports_present() {
-        let theme = ColorTheme::default();
-        let pane = pane(PermissionMode::Default, PaneStatus::Running, "");
-        let ports = vec![3000];
-        let lines = render_pane_lines_with_ports(
-            &pane,
-            &PaneGitInfo {
-                repo_root: Some("/tmp/project".into()),
-                branch: Some("feature/sidebar/really-long-branch-name-that-should-truncate".into()),
-                is_worktree: false,
-                worktree_name: None,
-            },
-            Some(&ports),
-            None,
-            false,
-            false,
-            40,
-            &StatusIcons::default(),
-            &theme,
-            0,
-            0,
-        );
-
-        assert!(lines.len() >= 2);
-        let branch_port_line = line_text(&lines[1]);
-        assert!(
-            branch_port_line.contains('…'),
-            "long branch should be truncated"
-        );
-        assert!(branch_port_line.contains(":3000"));
-        assert!(
-            branch_port_line.find('…') < branch_port_line.find(":3000"),
-            "branch truncation should remain left of the port text"
-        );
-    }
-
-    #[test]
     fn render_pane_lines_uses_injected_now_for_elapsed() {
         let theme = ColorTheme::default();
         let mut pane = pane(PermissionMode::Default, PaneStatus::Running, "");
         pane.started_at = Some(1_000_000 - 125);
-        let lines = render_pane_lines_with_ports(
+        let lines = render_pane_lines(
             &pane,
-            &PaneGitInfo::default(),
-            None,
             None,
             false,
             false,
@@ -397,10 +307,8 @@ mod tests {
     fn render_pane_lines_shows_idle_prompt_hint() {
         let theme = ColorTheme::default();
         let pane = pane(PermissionMode::Default, PaneStatus::Idle, "");
-        let lines = render_pane_lines_with_ports(
+        let lines = render_pane_lines(
             &pane,
-            &PaneGitInfo::default(),
-            None,
             None,
             false,
             false,
@@ -425,10 +333,8 @@ mod tests {
         let theme = ColorTheme::default();
         let mut p = pane(PermissionMode::Default, PaneStatus::Running, "");
         p.bg_shell_cmd = Some("npm run dev".into());
-        let lines = render_pane_lines_with_ports(
+        let lines = render_pane_lines(
             &p,
-            &PaneGitInfo::default(),
-            None,
             None,
             false,
             false,
@@ -451,10 +357,8 @@ mod tests {
         let theme = ColorTheme::default();
         let mut p = pane(PermissionMode::Default, PaneStatus::Idle, "");
         p.bg_shell_cmd = Some("cargo watch".into());
-        let lines = render_pane_lines_with_ports(
+        let lines = render_pane_lines(
             &p,
-            &PaneGitInfo::default(),
-            None,
             None,
             false,
             false,
@@ -477,10 +381,8 @@ mod tests {
         let theme = ColorTheme::default();
         let mut p = pane(PermissionMode::Default, PaneStatus::Background, "");
         p.bg_shell_cmd = Some("cargo build --release".into());
-        let lines = render_pane_lines_with_ports(
+        let lines = render_pane_lines(
             &p,
-            &PaneGitInfo::default(),
-            None,
             None,
             false,
             false,
@@ -506,10 +408,8 @@ mod tests {
         let mut p = pane(PermissionMode::Default, PaneStatus::Background, "");
         p.bg_shell_cmd = Some("cargo run --bin very-long-command-name --flag".into());
         // Narrow width forces the ellipsis path in `truncate_to_width`.
-        let lines = render_pane_lines_with_ports(
+        let lines = render_pane_lines(
             &p,
-            &PaneGitInfo::default(),
-            None,
             None,
             false,
             false,
@@ -538,10 +438,8 @@ mod tests {
             PaneStatus::Idle,
             "hello world from codex",
         );
-        let lines = render_pane_lines_with_ports(
+        let lines = render_pane_lines(
             &pane,
-            &PaneGitInfo::default(),
-            None,
             None,
             false,
             false,
@@ -563,10 +461,8 @@ mod tests {
         let theme = ColorTheme::default();
         let mut p = pane(PermissionMode::Default, PaneStatus::Running, "test");
         p.subagents = vec!["Explore".into()];
-        let lines = render_pane_lines_with_ports(
+        let lines = render_pane_lines(
             &p,
-            &PaneGitInfo::default(),
-            None,
             None,
             false,
             false,
@@ -588,10 +484,8 @@ mod tests {
         let theme = ColorTheme::default();
         let mut p = pane(PermissionMode::Default, PaneStatus::Running, "test");
         p.subagents = vec!["Explore #1".into(), "Plan".into(), "Explore #2".into()];
-        let lines = render_pane_lines_with_ports(
+        let lines = render_pane_lines(
             &p,
-            &PaneGitInfo::default(),
-            None,
             None,
             false,
             false,
@@ -617,10 +511,8 @@ mod tests {
         let mut p = pane(PermissionMode::Default, PaneStatus::Waiting, "");
         p.subagents = vec!["Explore".into()];
         p.wait_reason = "permission_prompt".into();
-        let lines = render_pane_lines_with_ports(
+        let lines = render_pane_lines(
             &p,
-            &PaneGitInfo::default(),
-            None,
             None,
             false,
             false,
@@ -647,10 +539,8 @@ mod tests {
             "Task completed successfully",
             true,
         );
-        let lines = render_pane_lines_with_ports(
+        let lines = render_pane_lines(
             &p,
-            &PaneGitInfo::default(),
-            None,
             None,
             false,
             false,
@@ -676,10 +566,8 @@ mod tests {
             "abcdef ghijk lmnop qrstu vwxyz",
             true,
         );
-        let lines = render_pane_lines_with_ports(
+        let lines = render_pane_lines(
             &p,
-            &PaneGitInfo::default(),
-            None,
             None,
             false,
             false,
@@ -702,10 +590,8 @@ mod tests {
     fn render_pane_lines_normal_prompt_not_detected_as_response() {
         let theme = ColorTheme::default();
         let p = pane(PermissionMode::Default, PaneStatus::Running, "fix the bug");
-        let lines = render_pane_lines_with_ports(
+        let lines = render_pane_lines(
             &p,
-            &PaneGitInfo::default(),
-            None,
             None,
             false,
             false,
@@ -734,10 +620,8 @@ mod tests {
                 ("Task C".into(), TaskStatus::Pending),
             ],
         };
-        let lines = render_pane_lines_with_ports(
+        let lines = render_pane_lines(
             &p,
-            &PaneGitInfo::default(),
-            None,
             Some(&progress),
             false,
             false,
@@ -760,10 +644,8 @@ mod tests {
         let theme = ColorTheme::default();
         let p = pane(PermissionMode::Default, PaneStatus::Idle, "");
         let progress = TaskProgress { tasks: vec![] };
-        let lines = render_pane_lines_with_ports(
+        let lines = render_pane_lines(
             &p,
-            &PaneGitInfo::default(),
-            None,
             Some(&progress),
             false,
             false,
@@ -777,252 +659,6 @@ mod tests {
         assert_eq!(lines.len(), 2);
         let hint = line_text(&lines[1]);
         assert!(hint.contains("Waiting for prompt"));
-    }
-
-    #[test]
-    fn branch_ports_row_renders_port_only_without_branch() {
-        let theme = ColorTheme::default();
-        let ctx = test_ctx(&theme, 40, false);
-        let ports = vec![3000];
-        let line = branch_ports_row(&PaneGitInfo::default(), Some(&ports), false, &ctx)
-            .expect("should render port line");
-        assert!(line_text(&line).contains(":3000"));
-    }
-
-    #[test]
-    fn branch_ports_row_renders_plus_marker_for_non_spawned_worktree() {
-        let theme = ColorTheme::default();
-        let ctx = test_ctx(&theme, 40, false);
-        let git = PaneGitInfo {
-            repo_root: Some("/r".into()),
-            branch: Some("feat/x".into()),
-            is_worktree: true,
-            worktree_name: None,
-        };
-        let line = branch_ports_row(&git, None, false, &ctx).expect("branch row should render");
-        let text = line_text(&line);
-        assert!(text.contains("+ feat/x"), "plain + marker: {text}");
-        assert!(!text.contains('×'), "non-spawned must not render ×");
-    }
-
-    #[test]
-    fn branch_ports_row_pins_trailing_x_to_right_edge_for_sidebar_spawned_worktree() {
-        let theme = ColorTheme::default();
-        let inner_width = 40usize;
-        let ctx = test_ctx(&theme, inner_width, false);
-        let git = PaneGitInfo {
-            repo_root: Some("/r".into()),
-            branch: Some("feat/x".into()),
-            is_worktree: true,
-            worktree_name: None,
-        };
-        let line = branch_ports_row(&git, None, true, &ctx).expect("branch row should render");
-        let text = line_text(&line);
-        assert!(
-            text.contains("+ feat/x"),
-            "+ worktree marker must be preserved: {text}"
-        );
-        // The trailing `×` must sit at the very last row column
-        // (= inner_width + 1), mirroring the repo header's
-        // right-aligned `+` spawn button.
-        assert_eq!(
-            rendered_x_col(&text),
-            inner_width + 1,
-            "× should pin to the rightmost column"
-        );
-        // The `×` suffix must come AFTER the branch text, not before.
-        let plus_idx = text.find("+ feat/x").unwrap();
-        let x_idx = text.find('×').unwrap();
-        assert!(
-            plus_idx < x_idx,
-            "`+ feat/x` must precede the trailing `×`, got: {text}"
-        );
-        // Branch text stays in the normal branch color.
-        let body_span = line
-            .spans
-            .iter()
-            .find(|s| s.content.contains("feat/x"))
-            .expect("branch body span");
-        assert_eq!(body_span.style.fg, Some(theme.branch));
-        // The trailing `×` span is painted with status_error so the
-        // glyph reads as a remove action.
-        let marker_span = line
-            .spans
-            .iter()
-            .find(|s| s.content == "×")
-            .expect("× span");
-        assert_eq!(marker_span.style.fg, Some(theme.status_error));
-    }
-
-    /// Display column (in terminal cells, not bytes) where the
-    /// first `×` appears in the rendered row. `text.find` returns a
-    /// byte index which skews for multibyte glyphs like `…`, so
-    /// tests that truncate branches need to measure in display cells.
-    fn rendered_x_col(text: &str) -> usize {
-        let idx = text.find('×').expect("× should be present");
-        display_width(&text[..idx])
-    }
-
-    #[test]
-    fn branch_ports_row_truncates_long_branch_but_keeps_x_at_right_edge() {
-        let theme = ColorTheme::default();
-        // Narrow ctx forces the branch text to truncate, but the
-        // `×` must still render at the right edge — the action
-        // affordance cannot be the thing that gets clipped.
-        let inner_width = 18usize;
-        let ctx = test_ctx(&theme, inner_width, false);
-        let git = PaneGitInfo {
-            repo_root: Some("/r".into()),
-            branch: Some("feature/really-long-branch-name".into()),
-            is_worktree: true,
-            worktree_name: None,
-        };
-        let line = branch_ports_row(&git, None, true, &ctx).expect("branch row should render");
-        let text = line_text(&line);
-        assert!(
-            text.contains('×'),
-            "× must remain visible even when branch truncates: {text}"
-        );
-        assert!(
-            text.contains('…'),
-            "branch text should show truncation ellipsis: {text}"
-        );
-        assert_eq!(
-            rendered_x_col(&text),
-            inner_width + 1,
-            "× stays pinned to right edge under truncation"
-        );
-        // Total row width = marker(1) + space(1) + inner_width.
-        let rendered_width = display_width(text.trim_end());
-        assert!(
-            rendered_width <= inner_width + 2,
-            "row must fit within marker + inner width (={}), got {rendered_width}: {text}",
-            inner_width + 2
-        );
-    }
-
-    #[test]
-    fn sidebar_remove_marker_col_matches_branch_ports_row_layout() {
-        // The click-target math in panes.rs uses
-        // `sidebar_remove_marker_col` to line up the hit region with
-        // the rendered `×`. Verify the two agree by counting the `×`
-        // position in the rendered text and comparing to the helper.
-        let theme = ColorTheme::default();
-        let ctx = test_ctx(&theme, 40, false);
-        let git = PaneGitInfo {
-            repo_root: Some("/r".into()),
-            branch: Some("feat/abc".into()),
-            is_worktree: true,
-            worktree_name: None,
-        };
-        let line = branch_ports_row(&git, None, true, &ctx).expect("branch row should render");
-        let text = line_text(&line);
-        let computed = sidebar_remove_marker_col(&git, None, true, ctx.inner_width)
-            .expect("col should be Some");
-        assert_eq!(
-            computed as usize,
-            rendered_x_col(&text),
-            "computed × col must match rendered position"
-        );
-    }
-
-    #[test]
-    fn sidebar_remove_marker_col_does_not_depend_on_branch_length() {
-        // Right-edge pinning means the col is determined by the row
-        // width alone. A short and a long branch must produce the
-        // same col.
-        let short = PaneGitInfo {
-            repo_root: Some("/r".into()),
-            branch: Some("x".into()),
-            is_worktree: true,
-            worktree_name: None,
-        };
-        let long = PaneGitInfo {
-            repo_root: Some("/r".into()),
-            branch: Some("feature/really-long-branch-name".into()),
-            is_worktree: true,
-            worktree_name: None,
-        };
-        let col_short = sidebar_remove_marker_col(&short, None, true, 40);
-        let col_long = sidebar_remove_marker_col(&long, None, true, 40);
-        assert_eq!(col_short, col_long);
-        assert_eq!(col_short, Some(41));
-    }
-
-    #[test]
-    fn sidebar_remove_marker_col_returns_none_for_non_spawned() {
-        let git = PaneGitInfo {
-            repo_root: Some("/r".into()),
-            branch: Some("feat/x".into()),
-            is_worktree: true,
-            worktree_name: None,
-        };
-        assert_eq!(sidebar_remove_marker_col(&git, None, false, 40), None);
-    }
-
-    #[test]
-    fn sidebar_remove_marker_col_returns_none_for_non_worktree_branch() {
-        // sidebar_spawned=true but the branch label has no `+` prefix
-        // (is_worktree=false). No × should be rendered or registered.
-        let git = PaneGitInfo {
-            repo_root: Some("/r".into()),
-            branch: Some("main".into()),
-            is_worktree: false,
-            worktree_name: None,
-        };
-        assert_eq!(sidebar_remove_marker_col(&git, None, true, 40), None);
-    }
-
-    #[test]
-    fn branch_ports_row_keeps_x_at_right_edge_when_ports_are_present() {
-        // Ports (`  :3000`) eat space on the right side of the row,
-        // but the `×` must still pin to the very last column with
-        // ports stacked just to its left.
-        let theme = ColorTheme::default();
-        let inner_width = 40usize;
-        let ctx = test_ctx(&theme, inner_width, false);
-        let git = PaneGitInfo {
-            repo_root: Some("/r".into()),
-            branch: Some("feat/abc".into()),
-            is_worktree: true,
-            worktree_name: None,
-        };
-        let ports = [3000u16];
-        let line =
-            branch_ports_row(&git, Some(&ports), true, &ctx).expect("branch row should render");
-        let text = line_text(&line);
-        assert_eq!(
-            rendered_x_col(&text),
-            inner_width + 1,
-            "× must pin to right edge regardless of port presence"
-        );
-        let port_idx = text.find(":3000").expect(":3000 should be present");
-        let x_idx = text.find('×').unwrap();
-        assert!(
-            port_idx < x_idx,
-            "ports should sit to the LEFT of the × marker: {text}"
-        );
-    }
-
-    #[test]
-    fn branch_ports_row_keeps_plain_branch_when_sidebar_spawned_but_not_worktree() {
-        // Edge case: sidebar_spawned=true but is_worktree=false.
-        // `branch_label` does not emit the "+ " prefix, so
-        // branch_ports_row must not try to swap anything and the
-        // resulting row must stay plain.
-        let theme = ColorTheme::default();
-        let ctx = test_ctx(&theme, 40, false);
-        let git = PaneGitInfo {
-            repo_root: Some("/r".into()),
-            branch: Some("main".into()),
-            is_worktree: false,
-            worktree_name: None,
-        };
-        let line = branch_ports_row(&git, None, true, &ctx).expect("branch row should render");
-        let text = line_text(&line);
-        assert!(text.contains("main"));
-        assert!(!text.contains('×'));
-        assert!(!text.contains('+'));
     }
 
     #[test]
@@ -1043,10 +679,8 @@ mod tests {
     fn render_pane_lines_selected_applies_background_to_spans() {
         let theme = ColorTheme::default();
         let pane = pane(PermissionMode::Auto, PaneStatus::Running, "do work");
-        let lines = render_pane_lines_with_ports(
+        let lines = render_pane_lines(
             &pane,
-            &PaneGitInfo::default(),
-            None,
             None,
             true, // selected
             false,
@@ -1074,10 +708,8 @@ mod tests {
     fn render_pane_lines_selected_leaves_content_rows_unhighlighted() {
         let theme = ColorTheme::default();
         let pane = pane(PermissionMode::Auto, PaneStatus::Running, "do work");
-        let lines = render_pane_lines_with_ports(
+        let lines = render_pane_lines(
             &pane,
-            &PaneGitInfo::default(),
-            None,
             None,
             true, // selected
             false,
@@ -1102,10 +734,8 @@ mod tests {
     fn render_pane_lines_active_shows_left_marker_on_status_row() {
         let theme = ColorTheme::default();
         let pane = pane(PermissionMode::Default, PaneStatus::Running, "");
-        let lines = render_pane_lines_with_ports(
+        let lines = render_pane_lines(
             &pane,
-            &PaneGitInfo::default(),
-            None,
             None,
             false,
             true, // active

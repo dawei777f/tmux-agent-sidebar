@@ -1,17 +1,10 @@
 use crate::cli::{sanitize_tmux_value, set_attention, set_status};
-use crate::desktop_notification;
-use crate::desktop_notification::DesktopNotificationKind;
 use crate::tmux;
 
 use crate::time::now_epoch_secs;
 
 use super::super::context::{
     AgentContext, clear_run_state, is_system_message, mark_task_reset, set_agent_meta,
-};
-use super::super::notifications::{
-    NotifyLabels, NotifyPayload, notification_run_id, notify_lifecycle, set_notification_run_id,
-    stop_body, stop_failure_body, stop_failure_fingerprint, task_completed_body,
-    task_completed_fingerprint,
 };
 use super::status_priority::resolve_stop_status;
 
@@ -23,7 +16,6 @@ pub(in crate::cli::hook) fn on_user_prompt_submit(
     set_agent_meta(pane, ctx);
     set_attention(pane, "clear");
     set_status(pane, "running");
-    set_notification_run_id(pane);
     if !prompt.is_empty() && !is_system_message(prompt) {
         let p = sanitize_tmux_value(prompt);
         tmux::set_pane_option(pane, tmux::PANE_PROMPT, &p);
@@ -39,7 +31,6 @@ pub(in crate::cli::hook) fn on_stop(
     ctx: &AgentContext<'_>,
     last_message: &str,
     response: Option<&str>,
-    notifications: &desktop_notification::DesktopNotificationSettings,
 ) -> i32 {
     set_agent_meta(pane, ctx);
     set_attention(pane, "clear");
@@ -56,33 +47,6 @@ pub(in crate::cli::hook) fn on_stop(
     }
     mark_task_reset(pane);
     set_status(pane, resolve_stop_status(bg_shell_live));
-
-    if !bg_shell_live {
-        let run_id = notification_run_id(pane);
-        // Skip the generic Stop notification if an explicit TaskCompleted
-        // stamp from the current run has already fired — otherwise Claude
-        // Code's `TaskCompleted` → `Stop` sequence produces two desktop
-        // notifications for the same logical completion.
-        let already_notified = desktop_notification::has_run_scoped_stamp(
-            pane,
-            DesktopNotificationKind::TaskCompleted,
-            run_id,
-        );
-        if !already_notified {
-            let _ = notify_lifecycle(
-                pane,
-                NotifyLabels::FromCtx(ctx),
-                notifications,
-                run_id,
-                NotifyPayload {
-                    kind: DesktopNotificationKind::TaskCompleted,
-                    event: desktop_notification::DesktopNotificationEvent::Stop,
-                    fingerprint_suffix: "stop",
-                    body: &stop_body(last_message),
-                },
-            );
-        }
-    }
     if let Some(resp) = response {
         println!("{resp}");
     }
@@ -93,7 +57,6 @@ pub(in crate::cli::hook) fn on_stop_failure(
     pane: &str,
     ctx: &AgentContext<'_>,
     error: &str,
-    notifications: &desktop_notification::DesktopNotificationSettings,
 ) -> i32 {
     set_agent_meta(pane, ctx);
     set_attention(pane, "clear");
@@ -103,40 +66,6 @@ pub(in crate::cli::hook) fn on_stop_failure(
         tmux::set_pane_option(pane, tmux::PANE_WAIT_REASON, error);
     }
     set_status(pane, "error");
-    let _ = notify_lifecycle(
-        pane,
-        NotifyLabels::FromCtx(ctx),
-        notifications,
-        None,
-        NotifyPayload {
-            kind: DesktopNotificationKind::TaskFailed,
-            event: desktop_notification::DesktopNotificationEvent::StopFailure,
-            fingerprint_suffix: stop_failure_fingerprint(error),
-            body: &stop_failure_body(error),
-        },
-    );
-    0
-}
-
-pub(in crate::cli::hook) fn on_task_completed(
-    pane: &str,
-    agent_name: &str,
-    task_id: &str,
-    task_subject: &str,
-    notifications: &desktop_notification::DesktopNotificationSettings,
-) -> i32 {
-    let _ = notify_lifecycle(
-        pane,
-        NotifyLabels::FromPane { agent: agent_name },
-        notifications,
-        None,
-        NotifyPayload {
-            kind: DesktopNotificationKind::TaskCompleted,
-            event: desktop_notification::DesktopNotificationEvent::TaskCompleted,
-            fingerprint_suffix: task_completed_fingerprint(task_id, task_subject),
-            body: &task_completed_body(task_subject),
-        },
-    );
     0
 }
 
@@ -152,7 +81,6 @@ mod tests {
             agent: "claude",
             cwd: "/repo",
             permission_mode: "default",
-            worktree: &None,
             session_id: &None,
         };
         let exit = on_user_prompt_submit(pane, &ctx, "fix the bug");
@@ -180,7 +108,6 @@ mod tests {
             agent: "claude",
             cwd: "/repo",
             permission_mode: "default",
-            worktree: &None,
             session_id: &None,
         };
         on_user_prompt_submit(pane, &ctx, "<system-reminder>ignore me</system-reminder>");
@@ -205,7 +132,6 @@ mod tests {
             agent: "claude",
             cwd: "/repo",
             permission_mode: "default",
-            worktree: &None,
             session_id: &None,
         };
         on_user_prompt_submit(pane, &ctx, "new prompt");
@@ -227,20 +153,10 @@ mod tests {
             agent: "claude",
             cwd: "/repo",
             permission_mode: "default",
-            worktree: &None,
             session_id: &None,
         };
 
-        let exit = on_stop(
-            pane,
-            &ctx,
-            "",
-            None,
-            &desktop_notification::DesktopNotificationSettings {
-                enabled: false,
-                events: Default::default(),
-            },
-        );
+        let exit = on_stop(pane, &ctx, "", None);
 
         assert_eq!(exit, 0);
         assert_eq!(
@@ -262,20 +178,10 @@ mod tests {
             agent: "claude",
             cwd: "/repo",
             permission_mode: "default",
-            worktree: &None,
             session_id: &None,
         };
 
-        on_stop(
-            pane,
-            &ctx,
-            "",
-            None,
-            &desktop_notification::DesktopNotificationSettings {
-                enabled: false,
-                events: Default::default(),
-            },
-        );
+        on_stop(pane, &ctx, "", None);
 
         assert_eq!(
             tmux::test_mock::get(pane, tmux::PANE_STATUS).as_deref(),
@@ -292,18 +198,9 @@ mod tests {
             agent: "claude",
             cwd: "/repo",
             permission_mode: "default",
-            worktree: &None,
             session_id: &None,
         };
-        let exit = on_stop_failure(
-            pane,
-            &ctx,
-            "rate_limit",
-            &desktop_notification::DesktopNotificationSettings {
-                enabled: false,
-                events: Default::default(),
-            },
-        );
+        let exit = on_stop_failure(pane, &ctx, "rate_limit");
         assert_eq!(exit, 0);
         assert_eq!(
             tmux::test_mock::get(pane, tmux::PANE_STATUS).as_deref(),

@@ -2,14 +2,13 @@ use ratatui::style::Color;
 
 use crate::tmux::{self, AgentType, PaneStatus};
 
-/// Runtime color theme, loaded from tmux @sidebar_color_* variables on startup.
-/// Falls back to defaults if tmux variables are not set.
+/// Runtime color theme, loaded from rmux @sidebar_color_* options on startup.
+/// Falls back to defaults if rmux options are not set.
 #[derive(Debug, Clone)]
 pub struct ColorTheme {
     /// Accent color shared by every "active / focused" affordance:
     /// the `┃` marker on the active pane, the focused repo header, the
-    /// bottom panel border when Activity/Git is focused, and the repo
-    /// popup border.
+    /// repository header and the repo popup border.
     pub accent: Color,
     pub border_inactive: Color,
     pub status_all: Color,
@@ -28,7 +27,6 @@ pub struct ColorTheme {
     pub text_muted: Color,
     pub text_inactive: Color,
     pub session_header: Color,
-    pub port: Color,
     pub wait_reason: Color,
     pub selection_bg: Color,
     pub branch: Color,
@@ -37,11 +35,6 @@ pub struct ColorTheme {
     pub badge_plan: Color,
     pub task_progress: Color,
     pub subagent: Color,
-    pub commit_hash: Color,
-    pub diff_added: Color,
-    pub diff_deleted: Color,
-    pub file_change: Color,
-    pub pr_link: Color,
     pub section_title: Color,
     pub activity_timestamp: Color,
     pub response_arrow: Color,
@@ -68,7 +61,6 @@ impl Default for ColorTheme {
             text_muted: Color::Indexed(252),
             text_inactive: Color::Indexed(244),
             session_header: Color::Indexed(39),
-            port: Color::Indexed(246),
             wait_reason: Color::Indexed(221),
             selection_bg: Color::Indexed(239),
             branch: Color::Indexed(109),
@@ -77,11 +69,6 @@ impl Default for ColorTheme {
             badge_plan: Color::Indexed(117),
             task_progress: Color::Indexed(223),
             subagent: Color::Indexed(73),
-            commit_hash: Color::Indexed(221),
-            diff_added: Color::Indexed(114),
-            diff_deleted: Color::Indexed(174),
-            file_change: Color::Indexed(221),
-            pr_link: Color::Indexed(117),
             section_title: Color::Indexed(109),
             activity_timestamp: Color::Indexed(109),
             response_arrow: Color::Indexed(81),
@@ -90,8 +77,8 @@ impl Default for ColorTheme {
 }
 
 impl ColorTheme {
-    /// Load colors from tmux @sidebar_color_* variables, falling back to defaults.
-    /// Fetches all global options in a single tmux call to avoid N subprocess forks.
+    /// Load colors from rmux @sidebar_color_* variables, falling back to defaults.
+    /// Fetches all global options in a single rmux RPC request.
     pub fn from_tmux() -> Self {
         let mut theme = Self::default();
 
@@ -122,17 +109,11 @@ impl ColorTheme {
         theme.text_muted = read(tmux::SIDEBAR_COLOR_TEXT_MUTED, theme.text_muted);
         theme.text_inactive = read(tmux::SIDEBAR_COLOR_TEXT_INACTIVE, theme.text_inactive);
         theme.session_header = read(tmux::SIDEBAR_COLOR_SESSION, theme.session_header);
-        theme.port = read(tmux::SIDEBAR_COLOR_PORT, theme.port);
         theme.wait_reason = read(tmux::SIDEBAR_COLOR_WAIT_REASON, theme.wait_reason);
         theme.selection_bg = read(tmux::SIDEBAR_COLOR_SELECTION, theme.selection_bg);
         theme.branch = read(tmux::SIDEBAR_COLOR_BRANCH, theme.branch);
         theme.task_progress = read(tmux::SIDEBAR_COLOR_TASK_PROGRESS, theme.task_progress);
         theme.subagent = read(tmux::SIDEBAR_COLOR_SUBAGENT, theme.subagent);
-        theme.commit_hash = read(tmux::SIDEBAR_COLOR_COMMIT_HASH, theme.commit_hash);
-        theme.diff_added = read(tmux::SIDEBAR_COLOR_DIFF_ADDED, theme.diff_added);
-        theme.diff_deleted = read(tmux::SIDEBAR_COLOR_DIFF_DELETED, theme.diff_deleted);
-        theme.file_change = read(tmux::SIDEBAR_COLOR_FILE_CHANGE, theme.file_change);
-        theme.pr_link = read(tmux::SIDEBAR_COLOR_PR_LINK, theme.pr_link);
         theme.section_title = read(tmux::SIDEBAR_COLOR_SECTION_TITLE, theme.section_title);
         theme.activity_timestamp = read(
             tmux::SIDEBAR_COLOR_ACTIVITY_TIMESTAMP,

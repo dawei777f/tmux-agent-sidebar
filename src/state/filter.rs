@@ -112,7 +112,7 @@ impl AppState {
             if !self.global.repo_filter.matches_group(&group.name) {
                 continue;
             }
-            for (pane, _) in &group.panes {
+            for pane in &group.panes {
                 match pane.status {
                     crate::tmux::PaneStatus::Running => running += 1,
                     crate::tmux::PaneStatus::Background => background += 1,
@@ -253,8 +253,8 @@ mod tests {
 
     // ─── AppState status_counts / repo_names ─────────────────────────
 
-    use crate::group::{PaneGitInfo, RepoGroup};
-    use crate::tmux::{AgentType, PaneInfo, PermissionMode, WorktreeMetadata};
+    use crate::group::RepoGroup;
+    use crate::tmux::{AgentType, PaneInfo, PermissionMode};
 
     fn test_pane(id: &str, status: PaneStatus) -> PaneInfo {
         PaneInfo {
@@ -272,10 +272,8 @@ mod tests {
             permission_mode: PermissionMode::Default,
             subagents: vec![],
             pane_pid: None,
-            worktree: WorktreeMetadata::default(),
             session_id: None,
             session_name: String::new(),
-            sidebar_spawned: false,
             bg_shell_cmd: None,
         }
     }
@@ -294,18 +292,15 @@ mod tests {
                 name: "app".into(),
                 has_focus: true,
                 panes: vec![
-                    (test_pane("%1", PaneStatus::Running), PaneGitInfo::default()),
-                    (test_pane("%2", PaneStatus::Idle), PaneGitInfo::default()),
-                    (
-                        test_pane("%4", PaneStatus::Background),
-                        PaneGitInfo::default(),
-                    ),
+                    test_pane("%1", PaneStatus::Running),
+                    test_pane("%2", PaneStatus::Idle),
+                    test_pane("%4", PaneStatus::Background),
                 ],
             },
             RepoGroup {
                 name: "lib".into(),
                 has_focus: false,
-                panes: vec![(test_pane("%3", PaneStatus::Waiting), PaneGitInfo::default())],
+                panes: vec![test_pane("%3", PaneStatus::Waiting)],
             },
         ];
 

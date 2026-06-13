@@ -1,4 +1,7 @@
-use super::commands::run_tmux;
+use super::commands::{
+    get_all_global_options_formatted, get_global_option, get_pane_option_by_id,
+    set_pane_option_by_id, unset_pane_option_by_id,
+};
 
 // ─── Pane-scoped option keys ─────────────────────────────────────────
 //
@@ -26,27 +29,12 @@ pub const PANE_CWD: &str = "@pane_cwd";
 /// while this is set, and the sidebar surfaces the command text.
 pub const PANE_BG_CMD: &str = "@pane_bg_cmd";
 /// Value written to [`PANE_BG_CMD`] when the hook payload omits the real
-/// command. The ps liveness sweep matches on this to skip its own entries
-/// (placeholder has no process to verify against).
+/// command.
 pub const BG_CMD_PLACEHOLDER: &str = "(background shell)";
-/// Epoch-ms identifier regenerated on every SessionStart so
-/// notification fingerprints stay scoped to the current run and
-/// don't dedupe across restarts.
-pub const PANE_NOTIFICATION_RUN_ID: &str = "@pane_notification_run_id";
-/// Last fingerprint we fired a `PermissionRequired` desktop
-/// notification for — used to suppress duplicates.
-pub const PANE_OS_NOTIFY_PERMISSION_REQUIRED: &str = "@pane_os_notify_permission_required";
-/// Same dedup stamp for `TaskCompleted` notifications.
-pub const PANE_OS_NOTIFY_TASK_COMPLETED: &str = "@pane_os_notify_task_completed";
-/// Same dedup stamp for `TaskFailed` notifications.
-pub const PANE_OS_NOTIFY_TASK_FAILED: &str = "@pane_os_notify_task_failed";
 /// Legacy marker — see
 /// `cli/hook/context/pending.rs::PENDING_SESSION_END` for the
 /// rationale for keeping it defined but never set.
 pub const PANE_PENDING_SESSION_END: &str = "@pane_pending_session_end";
-/// Pending WorktreeRemove marker drained by `on_subagent_stop`
-/// when the last subagent exits.
-pub const PANE_PENDING_WORKTREE_REMOVE: &str = "@pane_pending_worktree_remove";
 /// Permission mode in use by the agent (e.g. `plan`,
 /// `acceptEdits`, `bypassPermissions`).
 pub const PANE_PERMISSION_MODE: &str = "@pane_permission_mode";
@@ -75,10 +63,6 @@ pub const PANE_SUBAGENTS: &str = "@pane_subagents";
 /// Reason the pane is in `waiting` status (`permission`,
 /// `session_resumed`, etc.).
 pub const PANE_WAIT_REASON: &str = "@pane_wait_reason";
-/// Branch name when the pane is attached to a git worktree.
-pub const PANE_WORKTREE_BRANCH: &str = "@pane_worktree_branch";
-/// Worktree slug (directory basename) for the attached worktree.
-pub const PANE_WORKTREE_NAME: &str = "@pane_worktree_name";
 
 // ─── Sidebar global option keys ─────────────────────────────────────
 
@@ -89,10 +73,10 @@ pub const SIDEBAR_FILTER: &str = "@sidebar_filter";
 pub const SIDEBAR_CURSOR: &str = "@sidebar_cursor";
 pub const SIDEBAR_REPO_FILTER: &str = "@sidebar_repo_filter";
 pub const SIDEBAR_BOTTOM_HEIGHT: &str = "@sidebar_bottom_height";
+pub const SIDEBAR_AUTO_CREATE: &str = "@sidebar_auto_create";
+pub const SIDEBAR_KEY: &str = "@sidebar_key";
+pub const SIDEBAR_KEY_ALL: &str = "@sidebar_key_all";
 pub const SIDEBAR_PET: &str = "@sidebar_pet";
-pub const SIDEBAR_NOTIFICATIONS: &str = "@sidebar_notifications";
-pub const SIDEBAR_NOTIFICATIONS_EVENTS: &str = "@sidebar_notifications_events";
-
 pub const SIDEBAR_COLOR_ACCENT: &str = "@sidebar_color_accent";
 pub const SIDEBAR_COLOR_BORDER: &str = "@sidebar_color_border";
 pub const SIDEBAR_COLOR_ALL: &str = "@sidebar_color_all";
@@ -110,17 +94,11 @@ pub const SIDEBAR_COLOR_TEXT_ACTIVE: &str = "@sidebar_color_text_active";
 pub const SIDEBAR_COLOR_TEXT_MUTED: &str = "@sidebar_color_text_muted";
 pub const SIDEBAR_COLOR_TEXT_INACTIVE: &str = "@sidebar_color_text_inactive";
 pub const SIDEBAR_COLOR_SESSION: &str = "@sidebar_color_session";
-pub const SIDEBAR_COLOR_PORT: &str = "@sidebar_color_port";
 pub const SIDEBAR_COLOR_WAIT_REASON: &str = "@sidebar_color_wait_reason";
 pub const SIDEBAR_COLOR_SELECTION: &str = "@sidebar_color_selection";
 pub const SIDEBAR_COLOR_BRANCH: &str = "@sidebar_color_branch";
 pub const SIDEBAR_COLOR_TASK_PROGRESS: &str = "@sidebar_color_task_progress";
 pub const SIDEBAR_COLOR_SUBAGENT: &str = "@sidebar_color_subagent";
-pub const SIDEBAR_COLOR_COMMIT_HASH: &str = "@sidebar_color_commit_hash";
-pub const SIDEBAR_COLOR_DIFF_ADDED: &str = "@sidebar_color_diff_added";
-pub const SIDEBAR_COLOR_DIFF_DELETED: &str = "@sidebar_color_diff_deleted";
-pub const SIDEBAR_COLOR_FILE_CHANGE: &str = "@sidebar_color_file_change";
-pub const SIDEBAR_COLOR_PR_LINK: &str = "@sidebar_color_pr_link";
 pub const SIDEBAR_COLOR_SECTION_TITLE: &str = "@sidebar_color_section_title";
 pub const SIDEBAR_COLOR_ACTIVITY_TIMESTAMP: &str = "@sidebar_color_activity_timestamp";
 pub const SIDEBAR_COLOR_RESPONSE_ARROW: &str = "@sidebar_color_response_arrow";
@@ -134,16 +112,14 @@ pub const SIDEBAR_ICON_ERROR: &str = "@sidebar_icon_error";
 pub const SIDEBAR_ICON_UNKNOWN: &str = "@sidebar_icon_unknown";
 
 pub fn get_option(name: &str) -> Option<String> {
-    run_tmux(&["show", "-gv", name])
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+    get_global_option(name).ok().flatten()
 }
 
-/// Fetch all global tmux options in a single subprocess call.
+/// Fetch all global rmux options in a single rmux RPC request.
 /// Returns a map of option name → value.
 pub fn get_all_global_options() -> std::collections::HashMap<String, String> {
     let mut map = std::collections::HashMap::new();
-    if let Some(output) = run_tmux(&["show", "-g"]) {
+    if let Ok(output) = get_all_global_options_formatted() {
         for line in output.lines() {
             // Format: "option-name value" or "@user_option value"
             if let Some((key, value)) = line.split_once(' ') {
@@ -159,7 +135,7 @@ pub fn set_pane_option(pane: &str, key: &str, value: &str) {
     if test_mock::intercept_set(pane, key, value) {
         return;
     }
-    let _ = run_tmux(&["set", "-t", pane, "-p", key, value]);
+    let _ = set_pane_option_by_id(pane, key, value);
 }
 
 pub fn unset_pane_option(pane: &str, key: &str) {
@@ -167,7 +143,7 @@ pub fn unset_pane_option(pane: &str, key: &str) {
     if test_mock::intercept_unset(pane, key) {
         return;
     }
-    let _ = run_tmux(&["set", "-t", pane, "-p", "-u", key]);
+    let _ = unset_pane_option_by_id(pane, key);
 }
 
 pub fn get_pane_option_value(pane: &str, key: &str) -> String {
@@ -175,16 +151,15 @@ pub fn get_pane_option_value(pane: &str, key: &str) -> String {
     if let Some(value) = test_mock::intercept_get(pane, key) {
         return value;
     }
-    run_tmux(&["show", "-t", pane, "-pv", key])
+    get_pane_option_by_id(pane, key)
         .map(|s| s.trim().to_string())
         .unwrap_or_default()
 }
 
 /// Per-thread in-memory tmux pane store used by tests. Activated by
 /// installing a mock with [`test_mock::install`]; until then, all
-/// `set/unset/get_pane_option*` calls fall through to the real `tmux`
-/// command. The whole module is `cfg(test)` so it has zero cost in
-/// release builds.
+/// `set/unset/get_pane_option*` calls fall through to the rmux API.
+/// The whole module is `cfg(test)` so it has zero cost in release builds.
 #[cfg(test)]
 pub mod test_mock {
     use std::cell::RefCell;

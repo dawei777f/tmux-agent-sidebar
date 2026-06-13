@@ -39,7 +39,6 @@ fn test_all_color_theme_defaults() {
 
     // Header/UI element colors
     assert_eq!(theme.session_header, Color::Indexed(39));
-    assert_eq!(theme.port, Color::Indexed(246));
     assert_eq!(theme.wait_reason, Color::Indexed(221));
     assert_eq!(theme.branch, Color::Indexed(109));
 
@@ -48,11 +47,6 @@ fn test_all_color_theme_defaults() {
     assert_eq!(theme.badge_auto, Color::Indexed(221));
     assert_eq!(theme.task_progress, Color::Indexed(223));
     assert_eq!(theme.subagent, Color::Indexed(73));
-    assert_eq!(theme.commit_hash, Color::Indexed(221));
-    assert_eq!(theme.diff_added, Color::Indexed(114));
-    assert_eq!(theme.diff_deleted, Color::Indexed(174));
-    assert_eq!(theme.file_change, Color::Indexed(221));
-    assert_eq!(theme.pr_link, Color::Indexed(117));
 }
 
 // ─── status_color() for all PaneStatus variants ─────────────────────
@@ -233,7 +227,6 @@ fn test_tool_color_all_branches() {
     }
 }
 
-// ─── Git status summary colors ──────────────────────────────────────
 // ─── Render Tests: verify correct colors in styled output ───────────
 
 #[test]
@@ -339,8 +332,6 @@ fn test_response_arrow_uses_response_arrow_color() {
     ");
 }
 
-// test_commit_hash_uses_commit_hash_color was removed because
-// git_last_commit and commit hash rendering no longer exist.
 // ─── Custom theme overrides for new fields ──────────────────────────
 
 #[test]
@@ -350,12 +341,6 @@ fn test_custom_theme_new_fields_override() {
         badge_auto: Color::Indexed(226),
         task_progress: Color::Indexed(200),
         subagent: Color::Indexed(100),
-        commit_hash: Color::Indexed(150),
-        diff_added: Color::Indexed(46),
-        diff_deleted: Color::Indexed(160),
-        file_change: Color::Indexed(208),
-        pr_link: Color::Indexed(33),
-        port: Color::Indexed(82),
         ..ColorTheme::default()
     };
 
@@ -363,62 +348,12 @@ fn test_custom_theme_new_fields_override() {
     assert_eq!(theme.badge_auto, Color::Indexed(226));
     assert_eq!(theme.task_progress, Color::Indexed(200));
     assert_eq!(theme.subagent, Color::Indexed(100));
-    assert_eq!(theme.commit_hash, Color::Indexed(150));
-    assert_eq!(theme.diff_added, Color::Indexed(46));
-    assert_eq!(theme.diff_deleted, Color::Indexed(160));
-    assert_eq!(theme.file_change, Color::Indexed(208));
-    assert_eq!(theme.pr_link, Color::Indexed(33));
-    assert_eq!(theme.port, Color::Indexed(82));
 
     // Original fields should still be default
     assert_eq!(theme.accent, Color::Indexed(153));
     assert_eq!(theme.agent_claude, Color::Indexed(174));
     assert_eq!(theme.pet_body, Color::Indexed(208));
     assert_eq!(theme.pet_eye, Color::Indexed(114));
-}
-
-// ─── Branch color in styled output ──────────────────────────────────
-
-#[test]
-fn test_branch_color_in_agent_panel() {
-    let pane = make_pane(AgentType::Claude, PaneStatus::Running);
-
-    let mut state = make_state(vec![SessionInfo {
-        session_name: "main".into(),
-        windows: vec![WindowInfo {
-            window_id: "@1".into(),
-            window_name: "project".into(),
-            window_active: true,
-            auto_rename: false,
-            panes: vec![pane.clone()],
-        }],
-    }]);
-    state.repo_groups = vec![tmux_agent_sidebar::group::RepoGroup {
-        name: "project".into(),
-        has_focus: true,
-        panes: vec![(
-            pane,
-            tmux_agent_sidebar::group::PaneGitInfo {
-                repo_root: Some("/home/user/project".into()),
-                branch: Some("feature/cool-feature".into()),
-                is_worktree: false,
-                worktree_name: None,
-            },
-        )],
-    }];
-    state.rebuild_row_targets();
-    state.focus_state.sidebar_focused = false;
-    state.bottom_panel_height = 0;
-
-    // Styled snapshot locks in the branch name rendered with branch color
-    // (fg:109).
-    insta::assert_snapshot!(render_to_styled_string(&mut state, 40, 26), @r"
-     ≡[fg:111]1[fg:255]  ●[fg:245]1[fg:255]  ◎[fg:245]0[fg:245]  ◐[fg:245]0[fg:245]  ○[fg:245]0[fg:245]  ✕[fg:245]0[fg:245]
-    ⓘ[fg:221]                                    —[fg:252] ▾[fg:252]
-    p[fg:153]r[fg:153]o[fg:153]j[fg:153]e[fg:153]c[fg:153]t[fg:153]                                +[fg:153]
-    ┃[fg:153] ●[fg:82] [fg:174]c[fg:174]l[fg:174]a[fg:174]u[fg:174]d[fg:174]e[fg:174]
-    ┃[fg:153]  [fg:109] [fg:109]f[fg:109]e[fg:109]a[fg:109]t[fg:109]u[fg:109]r[fg:109]e[fg:109]/[fg:109]c[fg:109]o[fg:109]o[fg:109]l[fg:109]-[fg:109]f[fg:109]e[fg:109]a[fg:109]t[fg:109]u[fg:109]r[fg:109]e[fg:109]
-    ");
 }
 
 // ─── Selection background color ─────────────────────────────────────
@@ -475,12 +410,12 @@ fn test_accent_vs_border_inactive_colors() {
         tmux_agent_sidebar::group::RepoGroup {
             name: "focused-repo".into(),
             has_focus: true,
-            panes: vec![(pane1, tmux_agent_sidebar::group::PaneGitInfo::default())],
+            panes: vec![pane1],
         },
         tmux_agent_sidebar::group::RepoGroup {
             name: "unfocused-repo".into(),
             has_focus: false,
-            panes: vec![(pane2, tmux_agent_sidebar::group::PaneGitInfo::default())],
+            panes: vec![pane2],
         },
     ];
     state.focus_state.focused_pane_id = Some("%1".into());

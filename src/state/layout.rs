@@ -5,25 +5,6 @@ pub struct RowTarget {
     pub pane_id: String,
 }
 
-/// Click target for the `+` button rendered at the right edge of each
-/// repo-group header in the agents panel. Clicking it opens the spawn
-/// modal prefilled for that repo.
-#[derive(Debug, Clone)]
-pub struct RepoSpawnTarget {
-    pub rect: ratatui::layout::Rect,
-    pub repo_name: String,
-    pub repo_root: String,
-}
-
-/// Click target for the red `×` rendered next to the branch of a
-/// sidebar-spawned pane. Clicking it opens the close-pane confirmation
-/// for that specific pane.
-#[derive(Debug, Clone)]
-pub struct SpawnRemoveTarget {
-    pub rect: ratatui::layout::Rect,
-    pub pane_id: String,
-}
-
 /// Screen-positioned hyperlink overlay for OSC 8 terminal hyperlinks.
 #[derive(Debug, Clone)]
 pub struct HyperlinkOverlay {
@@ -52,14 +33,7 @@ pub struct FrameLayout {
     /// X column of the repo filter button in the secondary header. `None`
     /// when the button is hidden. Used for click hit-testing.
     pub repo_button_col: Option<u16>,
-    /// Click regions for the `[+]` spawn button rendered at the right
-    /// edge of each repo-group header. One entry per visible repo group.
-    pub repo_spawn_targets: Vec<RepoSpawnTarget>,
-    /// Click regions for the red `×` remove marker rendered next to the
-    /// branch of each sidebar-spawned pane. One entry per visible row.
-    pub spawn_remove_targets: Vec<SpawnRemoveTarget>,
-    /// OSC 8 hyperlink overlays the main loop writes after each frame so
-    /// terminals can recognise PR numbers as clickable links.
+    /// OSC 8 hyperlink overlays the main loop writes after each frame.
     pub hyperlink_overlays: Vec<HyperlinkOverlay>,
 }
 
@@ -84,7 +58,7 @@ impl AppState {
             if !self.global.repo_filter.matches_group(&group.name) {
                 continue;
             }
-            for (pane, _) in &group.panes {
+            for pane in &group.panes {
                 if self.global.status_filter.matches(&pane.status) {
                     self.layout.pane_row_targets.push(RowTarget {
                         pane_id: pane.pane_id.clone(),
@@ -211,56 +185,12 @@ impl AppState {
             self.close_repo_popup();
             return;
         }
-        if self.is_spawn_input_open() {
-            if let Some(area) = self.spawn_input_popup_area()
-                && point_in_rect(row, col, area)
-            {
-                return;
-            }
-            self.close_spawn_input();
-            return;
-        }
-        if self.is_remove_confirm_open() {
-            if let Some(area) = self.remove_confirm_popup_area()
-                && point_in_rect(row, col, area)
-            {
-                return;
-            }
-            self.close_remove_confirm();
-            return;
-        }
-
         if row == 0 {
             self.handle_filter_click(col);
             return;
         }
         if row == 1 {
             self.handle_secondary_header_click(col);
-            return;
-        }
-
-        // Check the `+` spawn buttons before the pane-row fallback so a
-        // click on the button doesn't also shift the pane selection.
-        if let Some((repo_name, repo_root, anchor_y)) = self
-            .layout
-            .repo_spawn_targets
-            .iter()
-            .find(|t| point_in_rect(row, col, t.rect))
-            .map(|t| (t.repo_name.clone(), t.repo_root.clone(), t.rect.y))
-        {
-            self.open_spawn_input_for_repo(repo_name, repo_root, Some(anchor_y));
-            return;
-        }
-
-        // Check the red `×` remove markers next to spawn-created branches.
-        if let Some(pane_id) = self
-            .layout
-            .spawn_remove_targets
-            .iter()
-            .find(|t| point_in_rect(row, col, t.rect))
-            .map(|t| t.pane_id.clone())
-        {
-            self.open_remove_confirm_for_pane(pane_id);
             return;
         }
 

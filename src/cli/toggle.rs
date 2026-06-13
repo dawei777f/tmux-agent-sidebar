@@ -55,7 +55,7 @@ pub(crate) fn cmd_toggle(args: &[String]) -> i32 {
 
     // Check for existing sidebar
     let pane_id_role_format = pane_id_role_format();
-    let panes_output = tmux::run_tmux(&["list-panes", "-t", window_id, "-F", &pane_id_role_format])
+    let panes_output = tmux::list_panes_formatted(Some(window_id), false, &pane_id_role_format)
         .unwrap_or_default();
 
     let existing_sidebar = panes_output.lines().find_map(|line| {
@@ -71,23 +71,19 @@ pub(crate) fn cmd_toggle(args: &[String]) -> i32 {
         if create_only {
             return 0;
         }
-        let _ = tmux::run_tmux(&["kill-pane", "-t", &sidebar_pane]);
+        let _ = tmux::kill_pane(&sidebar_pane);
         return 0;
     }
 
-    let pane_geometry_output = tmux::run_tmux(&[
-        "list-panes",
-        "-t",
-        window_id,
-        "-F",
+    let pane_geometry_output = tmux::list_panes_formatted(
+        Some(window_id),
+        false,
         "#{pane_left} #{pane_width} #{pane_id}",
-    ])
+    )
     .unwrap_or_default();
 
     let target_pane = target_pane_for_position(&pane_geometry_output, sidebar_position)
         .unwrap_or_else(|| window_id.to_string());
-    let split_flags = split_window_flags(sidebar_position);
-
     // Remember active pane
     let active_pane = tmux::display_message(window_id, "#{pane_id}");
 
@@ -98,32 +94,27 @@ pub(crate) fn cmd_toggle(args: &[String]) -> i32 {
         .unwrap_or_else(|| "tmux-agent-sidebar".to_string());
 
     // Create sidebar pane
-    let sidebar_pane = tmux::run_tmux(&[
-        "split-window",
-        split_flags,
-        "-l",
-        &sidebar_width,
-        "-t",
+    let sidebar_pane = tmux::split_window_vertical(
         &target_pane,
-        "-c",
+        split_before(sidebar_position),
+        &sidebar_width,
         pane_path,
-        "-P",
-        "-F",
-        "#{pane_id}",
         &self_bin,
-    ])
+        "#{pane_id}",
+    )
     .map(|s| s.trim().to_string())
     .unwrap_or_default();
 
     if !sidebar_pane.is_empty() {
+        clear_sidebar_inherited_meta(&sidebar_pane);
         tmux::set_pane_option(&sidebar_pane, tmux::PANE_ROLE, "sidebar");
     }
 
     // Restore focus
     if !active_pane.is_empty() {
-        let _ = tmux::run_tmux(&["select-pane", "-t", &active_pane]);
+        let _ = tmux::select_pane_by_id(&active_pane);
     } else {
-        let _ = tmux::run_tmux(&["select-pane", "-t", window_id, "-l"]);
+        let _ = tmux::select_last_pane(window_id);
     }
 
     0
@@ -131,27 +122,23 @@ pub(crate) fn cmd_toggle(args: &[String]) -> i32 {
 
 pub(crate) fn cmd_toggle_all(_args: &[String]) -> i32 {
     let pane_id_role_format = pane_id_role_format();
-    let has_sidebar = tmux::run_tmux(&["list-panes", "-a", "-F", &pane_id_role_format])
+    let has_sidebar = tmux::list_panes_formatted(None, true, &pane_id_role_format)
         .map(|output| any_sidebar_pane(&output))
         .unwrap_or(false);
 
     if has_sidebar {
         let all_panes =
-            tmux::run_tmux(&["list-panes", "-a", "-F", &pane_id_role_format]).unwrap_or_default();
+            tmux::list_panes_formatted(None, true, &pane_id_role_format).unwrap_or_default();
         for line in all_panes.lines() {
             let parts: Vec<&str> = line.splitn(2, '|').collect();
             if parts.len() >= 2 && parts[1] == "sidebar" {
-                let _ = tmux::run_tmux(&["kill-pane", "-t", parts[0]]);
+                let _ = tmux::kill_pane(parts[0]);
             }
         }
     } else {
-        let all_windows = tmux::run_tmux(&[
-            "list-panes",
-            "-a",
-            "-F",
-            "#{window_id}|#{pane_current_path}",
-        ])
-        .unwrap_or_default();
+        let all_windows =
+            tmux::list_panes_formatted(None, true, "#{window_id}|#{pane_current_path}")
+                .unwrap_or_default();
         for (window_id, pane_path) in unique_window_paths(&all_windows) {
             let args = vec!["--create-only".to_string(), window_id, pane_path];
             cmd_toggle(&args);
@@ -243,36 +230,33 @@ fn target_pane_for_position(output: &str, position: SidebarPosition) -> Option<S
     .map(|pane| pane.pane_id)
 }
 
-/// `split-window` flags for each placement: `-hfb` inserts the new pane
-/// before the target (left of it), `-hf` after it (right of it). Both
-/// `f` variants span the full window height.
-fn split_window_flags(position: SidebarPosition) -> &'static str {
+fn split_before(position: SidebarPosition) -> bool {
     match position {
-        SidebarPosition::Left => "-hfb",
-        SidebarPosition::Right => "-hf",
+        SidebarPosition::Left => true,
+        SidebarPosition::Right => false,
     }
 }
 
 /// Decide whether `cmd_auto_close` should kill the window, given the raw
-/// outputs of the tmux queries it performs. Extracted as a pure function
-/// so the guard logic is directly unit-testable without a running tmux
+/// outputs of the rmux queries it performs. Extracted as a pure function
+/// so the guard logic is directly unit-testable without a running rmux
 /// server.
 ///
 /// - `list_panes_output`: `Some(stdout)` from `list-panes -F <pane role format>`,
-///   or `None` if the tmux call failed.
+///   or `None` if the rmux query failed.
 /// - `session_windows`: parsed value of `#{session_windows}`, or `None`
-///   if the tmux call failed or the value was unparseable.
+///   if the rmux query failed or the value was unparseable.
 /// - `session_attached`: parsed value of `#{session_attached}`, or `None`
-///   if the tmux call failed or the value was unparseable.
+///   if the rmux query failed or the value was unparseable.
 fn should_kill_window(
     list_panes_output: Option<&str>,
     session_windows: Option<u32>,
     session_attached: Option<u32>,
 ) -> bool {
     // `list-panes` failed or returned nothing: the window is either gone
-    // already or tmux is too busy to answer. Do NOT treat "no output"
+    // already or rmux is too busy to answer. Do NOT treat "no output"
     // as "no non-sidebar panes" — that would let us kill a live window
-    // whose query happened to race with another tmux command.
+    // whose query happened to race with another rmux request.
     let Some(output) = list_panes_output else {
         return false;
     };
@@ -311,32 +295,22 @@ pub(crate) fn cmd_auto_close(args: &[String]) -> i32 {
 
     let pane_role_format = format!("#{{{}}}", tmux::PANE_ROLE);
     let list_panes_output =
-        tmux::run_tmux(&["list-panes", "-t", window_id, "-F", &pane_role_format]);
+        tmux::list_panes_formatted(Some(window_id), false, &pane_role_format).ok();
 
-    let session_windows = tmux::run_tmux(&[
-        "display-message",
-        "-t",
-        window_id,
-        "-p",
-        "#{session_windows}",
-    ])
-    .and_then(|s| s.trim().parse().ok());
+    let session_windows = tmux::display_message_result(window_id, "#{session_windows}")
+        .ok()
+        .and_then(|s| s.trim().parse().ok());
 
-    let session_attached = tmux::run_tmux(&[
-        "display-message",
-        "-t",
-        window_id,
-        "-p",
-        "#{session_attached}",
-    ])
-    .and_then(|s| s.trim().parse().ok());
+    let session_attached = tmux::display_message_result(window_id, "#{session_attached}")
+        .ok()
+        .and_then(|s| s.trim().parse().ok());
 
     if should_kill_window(
         list_panes_output.as_deref(),
         session_windows,
         session_attached,
     ) {
-        let _ = tmux::run_tmux(&["kill-window", "-t", window_id]);
+        let _ = tmux::kill_window(window_id);
     }
 
     0
@@ -346,9 +320,62 @@ fn pane_id_role_format() -> String {
     format!("#{{pane_id}}|#{{{}}}", tmux::PANE_ROLE)
 }
 
+fn clear_sidebar_inherited_meta(pane: &str) {
+    for key in [
+        tmux::PANE_AGENT,
+        tmux::PANE_NAME,
+        tmux::PANE_ATTENTION,
+        tmux::PANE_CWD,
+        tmux::PANE_BG_CMD,
+        tmux::PANE_PENDING_SESSION_END,
+        tmux::PANE_PERMISSION_MODE,
+        tmux::PANE_PROMPT,
+        tmux::PANE_PROMPT_SOURCE,
+        tmux::PANE_SESSION_ID,
+        tmux::PANE_STARTED_AT,
+        tmux::PANE_STATUS,
+        tmux::PANE_SUBAGENTS,
+        tmux::PANE_WAIT_REASON,
+    ] {
+        tmux::unset_pane_option(pane, key);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clear_sidebar_inherited_meta_removes_agent_state() {
+        let _guard = tmux::test_mock::install();
+        let pane = "%sidebar";
+        for (key, value) in [
+            (tmux::PANE_AGENT, "codex"),
+            (tmux::PANE_STATUS, "running"),
+            (tmux::PANE_PROMPT, "prompt"),
+            (tmux::PANE_CWD, "/repo"),
+            (tmux::PANE_SESSION_ID, "session"),
+            (tmux::PANE_STARTED_AT, "1700000000"),
+        ] {
+            tmux::test_mock::set(pane, key, value);
+        }
+
+        clear_sidebar_inherited_meta(pane);
+
+        for key in [
+            tmux::PANE_AGENT,
+            tmux::PANE_STATUS,
+            tmux::PANE_PROMPT,
+            tmux::PANE_CWD,
+            tmux::PANE_SESSION_ID,
+            tmux::PANE_STARTED_AT,
+        ] {
+            assert!(
+                !tmux::test_mock::contains(pane, key),
+                "{key} should be cleared from sidebar pane"
+            );
+        }
+    }
 
     #[test]
     fn any_sidebar_pane_detects_sidebar_anywhere() {
@@ -432,12 +459,6 @@ mod tests {
             Some("%2".to_string())
         );
         assert_eq!(target_pane_for_position("", SidebarPosition::Right), None);
-    }
-
-    #[test]
-    fn split_window_flags_match_tmux_side_semantics() {
-        assert_eq!(split_window_flags(SidebarPosition::Left), "-hfb");
-        assert_eq!(split_window_flags(SidebarPosition::Right), "-hf");
     }
 
     // ─── should_kill_window ───────────────────────────────────────────

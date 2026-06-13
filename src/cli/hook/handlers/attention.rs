@@ -1,12 +1,7 @@
 use crate::cli::{set_attention, set_status};
-use crate::desktop_notification;
-use crate::desktop_notification::DesktopNotificationKind;
 use crate::tmux;
 
 use super::super::context::{AgentContext, set_agent_meta};
-use super::super::notifications::{
-    NotifyLabels, NotifyPayload, notification_body, notification_fingerprint, notify_lifecycle,
-};
 use super::status_priority::resolve_notification_status;
 
 pub(in crate::cli::hook) fn on_notification(
@@ -14,7 +9,6 @@ pub(in crate::cli::hook) fn on_notification(
     ctx: &AgentContext<'_>,
     wait_reason: &str,
     meta_only: bool,
-    notifications: &desktop_notification::DesktopNotificationSettings,
 ) -> i32 {
     set_agent_meta(pane, ctx);
     if meta_only {
@@ -31,42 +25,14 @@ pub(in crate::cli::hook) fn on_notification(
     } else {
         tmux::set_pane_option(pane, tmux::PANE_WAIT_REASON, wait_reason);
     }
-    let _ = notify_lifecycle(
-        pane,
-        NotifyLabels::FromCtx(ctx),
-        notifications,
-        None,
-        NotifyPayload {
-            kind: DesktopNotificationKind::PermissionRequired,
-            event: desktop_notification::DesktopNotificationEvent::Notification,
-            fingerprint_suffix: notification_fingerprint(wait_reason),
-            body: &notification_body(wait_reason),
-        },
-    );
     0
 }
 
-pub(in crate::cli::hook) fn on_permission_denied(
-    pane: &str,
-    ctx: &AgentContext<'_>,
-    notifications: &desktop_notification::DesktopNotificationSettings,
-) -> i32 {
+pub(in crate::cli::hook) fn on_permission_denied(pane: &str, ctx: &AgentContext<'_>) -> i32 {
     set_agent_meta(pane, ctx);
     set_status(pane, "waiting");
     set_attention(pane, "notification");
     tmux::set_pane_option(pane, tmux::PANE_WAIT_REASON, "permission_denied");
-    let _ = notify_lifecycle(
-        pane,
-        NotifyLabels::FromCtx(ctx),
-        notifications,
-        None,
-        NotifyPayload {
-            kind: DesktopNotificationKind::PermissionRequired,
-            event: desktop_notification::DesktopNotificationEvent::PermissionDenied,
-            fingerprint_suffix: "permission_denied",
-            body: "Permission required",
-        },
-    );
     0
 }
 
@@ -88,6 +54,15 @@ pub(in crate::cli::hook) fn on_teammate_idle(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn basic_ctx() -> AgentContext<'static> {
+        AgentContext {
+            agent: "claude",
+            cwd: "/repo",
+            permission_mode: "default",
+            session_id: &None,
+        }
+    }
 
     #[test]
     fn on_teammate_idle_sets_attention_and_reason() {
@@ -120,29 +95,11 @@ mod tests {
     fn on_notification_meta_only_skips_status_and_attention() {
         let _guard = tmux::test_mock::install();
         let pane = "%NOTIF_META";
-        let ctx = AgentContext {
-            agent: "claude",
-            cwd: "/repo",
-            permission_mode: "default",
-            worktree: &None,
-            session_id: &None,
-        };
-        let notifications = desktop_notification::DesktopNotificationSettings {
-            enabled: false,
-            events: Default::default(),
-        };
-        on_notification(
-            pane,
-            &ctx,
-            "permission",
-            /* meta_only */ true,
-            &notifications,
-        );
-        // meta_only=true must short-circuit before status/attention/wait_reason writes.
+        let ctx = basic_ctx();
+        on_notification(pane, &ctx, "permission", true);
         assert!(!tmux::test_mock::contains(pane, tmux::PANE_STATUS));
         assert!(!tmux::test_mock::contains(pane, tmux::PANE_ATTENTION));
         assert!(!tmux::test_mock::contains(pane, tmux::PANE_WAIT_REASON));
-        // Agent meta should still be applied so the sidebar can render the pane.
         assert_eq!(
             tmux::test_mock::get(pane, tmux::PANE_AGENT).as_deref(),
             Some("claude")
@@ -153,24 +110,8 @@ mod tests {
     fn on_notification_sets_waiting_status_and_reason() {
         let _guard = tmux::test_mock::install();
         let pane = "%NOTIF_WAIT";
-        let ctx = AgentContext {
-            agent: "claude",
-            cwd: "/repo",
-            permission_mode: "default",
-            worktree: &None,
-            session_id: &None,
-        };
-        let notifications = desktop_notification::DesktopNotificationSettings {
-            enabled: false,
-            events: Default::default(),
-        };
-        on_notification(
-            pane,
-            &ctx,
-            "permission",
-            /* meta_only */ false,
-            &notifications,
-        );
+        let ctx = basic_ctx();
+        on_notification(pane, &ctx, "permission", false);
         assert_eq!(
             tmux::test_mock::get(pane, tmux::PANE_STATUS).as_deref(),
             Some("waiting")
@@ -190,24 +131,8 @@ mod tests {
         let _guard = tmux::test_mock::install();
         let pane = "%NOTIF_BG_PREEMPT";
         tmux::test_mock::set(pane, tmux::PANE_BG_CMD, "cargo test");
-        let ctx = AgentContext {
-            agent: "claude",
-            cwd: "/repo",
-            permission_mode: "default",
-            worktree: &None,
-            session_id: &None,
-        };
-        let notifications = desktop_notification::DesktopNotificationSettings {
-            enabled: false,
-            events: Default::default(),
-        };
-        on_notification(
-            pane,
-            &ctx,
-            "auth_success",
-            /* meta_only */ false,
-            &notifications,
-        );
+        let ctx = basic_ctx();
+        on_notification(pane, &ctx, "auth_success", false);
         assert_eq!(
             tmux::test_mock::get(pane, tmux::PANE_STATUS).as_deref(),
             Some("background"),
@@ -219,84 +144,8 @@ mod tests {
         let _guard = tmux::test_mock::install();
         let pane = "%NOTIF_PERM_OVER_BG";
         tmux::test_mock::set(pane, tmux::PANE_BG_CMD, "cargo test");
-        let ctx = AgentContext {
-            agent: "claude",
-            cwd: "/repo",
-            permission_mode: "default",
-            worktree: &None,
-            session_id: &None,
-        };
-        let notifications = desktop_notification::DesktopNotificationSettings {
-            enabled: false,
-            events: Default::default(),
-        };
-        on_notification(
-            pane,
-            &ctx,
-            "permission_prompt",
-            /* meta_only */ false,
-            &notifications,
-        );
-        assert_eq!(
-            tmux::test_mock::get(pane, tmux::PANE_STATUS).as_deref(),
-            Some("waiting"),
-        );
-    }
-
-    #[test]
-    fn on_notification_plain_permission_preempts_background() {
-        // Claude's real `notification_type: "permission"` payload must
-        // stay in `waiting` even with a live bg shell — the user has to
-        // act on the prompt regardless.
-        let _guard = tmux::test_mock::install();
-        let pane = "%NOTIF_PERM_PLAIN_OVER_BG";
-        tmux::test_mock::set(pane, tmux::PANE_BG_CMD, "cargo test");
-        let ctx = AgentContext {
-            agent: "claude",
-            cwd: "/repo",
-            permission_mode: "default",
-            worktree: &None,
-            session_id: &None,
-        };
-        let notifications = desktop_notification::DesktopNotificationSettings {
-            enabled: false,
-            events: Default::default(),
-        };
-        on_notification(
-            pane,
-            &ctx,
-            "permission",
-            /* meta_only */ false,
-            &notifications,
-        );
-        assert_eq!(
-            tmux::test_mock::get(pane, tmux::PANE_STATUS).as_deref(),
-            Some("waiting"),
-        );
-    }
-
-    #[test]
-    fn on_notification_soft_reason_without_bg_still_sets_waiting() {
-        let _guard = tmux::test_mock::install();
-        let pane = "%NOTIF_SOFT_NO_BG";
-        let ctx = AgentContext {
-            agent: "claude",
-            cwd: "/repo",
-            permission_mode: "default",
-            worktree: &None,
-            session_id: &None,
-        };
-        let notifications = desktop_notification::DesktopNotificationSettings {
-            enabled: false,
-            events: Default::default(),
-        };
-        on_notification(
-            pane,
-            &ctx,
-            "auth_success",
-            /* meta_only */ false,
-            &notifications,
-        );
+        let ctx = basic_ctx();
+        on_notification(pane, &ctx, "permission_prompt", false);
         assert_eq!(
             tmux::test_mock::get(pane, tmux::PANE_STATUS).as_deref(),
             Some("waiting"),
@@ -305,50 +154,20 @@ mod tests {
 
     #[test]
     fn on_notification_empty_wait_reason_clears_stale_value() {
-        // Regression: an empty wait_reason used to be a no-op, which
-        // left the previously-written reason on the pane. A later
-        // notification that genuinely has no reason must drop the
-        // stale one so the sidebar does not keep rendering the wrong
-        // cause.
         let _guard = tmux::test_mock::install();
         let pane = "%NOTIF_STALE";
         tmux::test_mock::set(pane, tmux::PANE_WAIT_REASON, "permission");
-
-        let ctx = AgentContext {
-            agent: "claude",
-            cwd: "/repo",
-            permission_mode: "default",
-            worktree: &None,
-            session_id: &None,
-        };
-        let notifications = desktop_notification::DesktopNotificationSettings {
-            enabled: false,
-            events: Default::default(),
-        };
-        on_notification(pane, &ctx, "", /* meta_only */ false, &notifications);
-
-        assert!(
-            !tmux::test_mock::contains(pane, tmux::PANE_WAIT_REASON),
-            "empty wait_reason must clear a prior value"
-        );
+        let ctx = basic_ctx();
+        on_notification(pane, &ctx, "", false);
+        assert!(!tmux::test_mock::contains(pane, tmux::PANE_WAIT_REASON));
     }
 
     #[test]
     fn on_permission_denied_records_permission_denied_wait_reason() {
         let _guard = tmux::test_mock::install();
         let pane = "%PD";
-        let ctx = AgentContext {
-            agent: "claude",
-            cwd: "/repo",
-            permission_mode: "default",
-            worktree: &None,
-            session_id: &None,
-        };
-        let notifications = desktop_notification::DesktopNotificationSettings {
-            enabled: false,
-            events: Default::default(),
-        };
-        on_permission_denied(pane, &ctx, &notifications);
+        let ctx = basic_ctx();
+        on_permission_denied(pane, &ctx);
         assert_eq!(
             tmux::test_mock::get(pane, tmux::PANE_WAIT_REASON).as_deref(),
             Some("permission_denied")

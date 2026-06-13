@@ -1,9 +1,9 @@
 ---
-title: tmux options
+title: rmux options
 description: Every @sidebar_* / @agent-sidebar-* option the plugin reads.
 ---
 
-Most options must be set **before** loading the plugin in your `tmux.conf`. Color codes are xterm 256-color numbers (0–255); icons can be any Unicode glyph.
+Most options must be set **before** loading the plugin in your rmux config. Color codes are xterm 256-color numbers (0–255); icons can be any Unicode glyph.
 
 ## Sidebar behavior
 
@@ -15,17 +15,7 @@ Most options must be set **before** loading the plugin in your `tmux.conf`. Colo
 | `@sidebar_position`              | `left`  | Sidebar placement (`left` or `right`)                                                   |
 | `@sidebar_bottom_height`         | `20`    | Bottom panel height in lines (set `0` to hide)                                          |
 | `@sidebar_auto_create`           | `on`    | Auto-create the sidebar on new windows (set `off` to disable)                           |
-| `@sidebar_notifications`         | `on`    | Master switch for desktop notifications                                                 |
-| `@sidebar_notifications_events`  | unset   | Restrict events — see [Notifications](/tmux-agent-sidebar/features/notifications/)       |
 | `@sidebar_pet`                  | `off`   | Show the animated pet in a 5-row band above the bottom panel                           |
-
-## Worktree spawn defaults
-
-| Option                            | Default     | Description                                               |
-| --------------------------------- | ----------- | --------------------------------------------------------- |
-| `@agent-sidebar-default-agent`    | `claude`    | Agent launched by `n`&nbsp;(also accepts `codex`)         |
-| `@agent-sidebar-branch-prefix`    | `agent/`    | Branch prefix for new worktrees                           |
-| `@agent-sidebar-worktree-dir`     | `.worktrees` | Repo-relative directory for sidebar-spawned worktrees; absolute paths and `..` are rejected |
 
 ## Status and filter colors
 
@@ -33,7 +23,7 @@ Most options must be set **before** loading the plugin in your `tmux.conf`. Colo
 | --------------------------------- | --------------- | ----------------------------------------------------------------- |
 | `@sidebar_color_all`              | `111`&nbsp;(sky blue)| Selected "all" filter icon                                        |
 | `@sidebar_color_running`          | `114`&nbsp;(green)   | Selected running/background filter icon and running/background pane status |
-| `@sidebar_color_waiting`          | `221`&nbsp;(yellow)  | Selected waiting filter icon, waiting pane status, version banner |
+| `@sidebar_color_waiting`          | `221`&nbsp;(yellow)  | Selected waiting filter icon and waiting pane status |
 | `@sidebar_color_idle`             | `110`&nbsp;(soft blue) | Selected idle filter icon and idle pane status                  |
 | `@sidebar_color_error`            | `167`&nbsp;(soft red) | Selected error filter icon and error pane status                 |
 | `@sidebar_color_filter_inactive`  | `245`&nbsp;(mid gray) | Unselected status filter icons and zero counts                   |
@@ -44,6 +34,7 @@ Most options must be set **before** loading the plugin in your `tmux.conf`. Colo
 | -------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------- |
 | `@sidebar_color_border`    | `240`&nbsp;(dark gray)    | Unfocused panel borders and tab separators                                                              |
 | `@sidebar_color_accent`    | `153`&nbsp;(pale sky blue) | Active pane marker, focused repo header, focused bottom panel border, repo popup border — the brand color |
+| `@sidebar_color_branch`    | `109`&nbsp;(teal)          | Repository/path grouping labels                                                                         |
 | `@sidebar_color_session`   | `39`&nbsp;(blue)          | Session name                                                                                            |
 | `@sidebar_color_selection` | `239`&nbsp;(dark gray)    | Selected row background                                                                                 |
 
@@ -62,7 +53,6 @@ Most options must be set **before** loading the plugin in your `tmux.conf`. Colo
 | `@sidebar_color_text_active`   | `255`&nbsp;(white)    | Primary text — active rows, counts, filtered repo label                                          |
 | `@sidebar_color_text_muted`    | `252`&nbsp;(light gray) | Secondary text — tree branches, empty-state messages, inactive bottom tabs, activity log labels |
 | `@sidebar_color_text_inactive` | `244`&nbsp;(mid gray) | Body text of unfocused pane rows — prompt / response, idle hint                                  |
-| `@sidebar_color_port`          | `246`&nbsp;(light gray) | Port numbers                                                                                   |
 | `@sidebar_color_wait_reason`   | `221`&nbsp;(yellow)   | Wait reason text                                                                                 |
 | `@sidebar_color_response_arrow`| `81`&nbsp;(bright cyan) | Response arrow                                                                                 |
 
@@ -72,17 +62,6 @@ Most options must be set **before** loading the plugin in your `tmux.conf`. Colo
 | ------------------------------- | ----------------- | --------------------- |
 | `@sidebar_color_task_progress`  | `223`&nbsp;(pale yellow) | Task progress summary |
 | `@sidebar_color_subagent`       | `73`&nbsp;(soft teal)  | Sub-agent tree        |
-
-## Git tab colors
-
-| Option                          | Default            | What it paints      |
-| ------------------------------- | ------------------ | ------------------- |
-| `@sidebar_color_branch`         | `109`&nbsp;(teal)       | Git branch name     |
-| `@sidebar_color_commit_hash`    | `221`&nbsp;(yellow)     | Commit hash         |
-| `@sidebar_color_diff_added`     | `114`&nbsp;(green)      | Added diff lines    |
-| `@sidebar_color_diff_deleted`   | `174`&nbsp;(terracotta) | Deleted diff lines  |
-| `@sidebar_color_file_change`    | `221`&nbsp;(yellow)     | File change stats   |
-| `@sidebar_color_pr_link`        | `117`&nbsp;(light blue) | PR link / number    |
 
 ## Section titles and timestamps
 
@@ -113,8 +92,6 @@ set -g @sidebar_key T
 set -g @sidebar_width 32
 set -g @sidebar_position right
 set -g @sidebar_bottom_height 25
-set -g @sidebar_notifications_events "stop,notification"
-set -g @agent-sidebar-default-agent codex
 
 # Colors
 set -g @sidebar_color_accent 117
@@ -124,6 +101,4 @@ set -g @sidebar_color_agent_opencode 39
 # Icons
 set -g @sidebar_icon_running '▶'
 set -g @sidebar_icon_error   '⚠'
-
-run-shell ~/.tmux/plugins/tmux-agent-sidebar/tmux-agent-sidebar.tmux
 ```

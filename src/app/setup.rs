@@ -6,10 +6,9 @@ use crate::ui;
 /// Construct and prime the initial [`AppState`] before the event loop starts.
 ///
 /// Equivalent to the original `run_app` prelude in `src/main.rs`: installs the
-/// color theme/icons from tmux options, loads global filter state, resolves
-/// the Claude plugin install version once at startup, seeds session names
-/// synchronously so `/rename` labels render on the first frame, and performs
-/// the first refresh pass.
+/// color theme/icons from rmux options, loads global filter state, seeds
+/// session names synchronously so `/rename` labels render on the first frame,
+/// and performs the first refresh pass.
 pub(super) fn init_state(tmux_pane: String) -> AppState {
     let mut state = AppState::new(tmux_pane);
     state.theme = ui::colors::ColorTheme::from_tmux();
@@ -19,10 +18,9 @@ pub(super) fn init_state(tmux_pane: String) -> AppState {
     state.global.load_from_tmux();
     state.refresh();
 
-    // Resolve the installed Claude Code plugin status once at startup,
-    // matching the version_notice pattern. Restart the sidebar after a
-    // /plugin install, /plugin uninstall, or /plugin update to pick up
-    // the new state.
+    // Resolve the installed Claude Code plugin status once at startup.
+    // Restart the sidebar after a /plugin install or /plugin uninstall
+    // to pick up the new state.
     state.notices.claude_plugin_status = plugin_state::installed_plugin_status();
     // Likewise resolve whether the user still has legacy
     // tmux-agent-sidebar/hook.sh entries in ~/.claude/settings.json so

@@ -29,7 +29,6 @@ impl ActivityEntry {
             "AskUserQuestion" | "PushNotification" => 216,      // soft orange (attention)
             "CronCreate" | "CronDelete" | "CronList" | "RemoteTrigger" => 151, // soft mint
             "EnterPlanMode" | "ExitPlanMode" => 189,            // soft periwinkle
-            "EnterWorktree" | "ExitWorktree" => 179,            // soft bronze
             "ToolSearch" => 250,                                // light gray
             _ => 244,
         }

@@ -36,7 +36,7 @@ impl Default for FocusState {
 impl AppState {
     pub fn pane_by_id(&self, pane_id: &str) -> Option<&tmux::PaneInfo> {
         for group in &self.repo_groups {
-            for (pane, _) in &group.panes {
+            for pane in &group.panes {
                 if pane.pane_id == pane_id {
                     return Some(pane);
                 }
@@ -54,7 +54,7 @@ impl AppState {
     }
 
     pub fn find_focused_pane(&mut self) {
-        // Query tmux directly for the active pane, not through `repo_groups`
+        // Query rmux directly for the active pane, not through `repo_groups`
         // which only contains agent panes.
         // When the sidebar has focus, find_active_pane returns None — preserve
         // the previously focused pane so the selection stays stable.
@@ -87,7 +87,7 @@ impl AppState {
         {
             // Update the sidebar immediately so the active marker and
             // repo header highlight move without waiting for the next
-            // periodic tmux refresh.
+            // periodic rmux refresh.
             self.focus_state.focused_pane_id = Some(target_pane_id.clone());
             tmux::select_pane(&target_pane_id);
 
@@ -142,9 +142,9 @@ mod tests {
 
     // ─── AppState focus accessors ────────────────────────────────────
 
-    use crate::group::{PaneGitInfo, RepoGroup};
+    use crate::group::RepoGroup;
     use crate::state::layout::RowTarget;
-    use crate::tmux::{AgentType, PaneInfo, PaneStatus, PermissionMode, WorktreeMetadata};
+    use crate::tmux::{AgentType, PaneInfo, PaneStatus, PermissionMode};
 
     fn test_pane(id: &str) -> PaneInfo {
         PaneInfo {
@@ -162,10 +162,8 @@ mod tests {
             permission_mode: PermissionMode::Default,
             subagents: vec![],
             pane_pid: None,
-            worktree: WorktreeMetadata::default(),
             session_id: None,
             session_name: String::new(),
-            sidebar_spawned: false,
             bg_shell_cmd: None,
         }
     }
@@ -177,12 +175,12 @@ mod tests {
             RepoGroup {
                 name: "alpha".into(),
                 has_focus: true,
-                panes: vec![(test_pane("%1"), PaneGitInfo::default())],
+                panes: vec![test_pane("%1")],
             },
             RepoGroup {
                 name: "beta".into(),
                 has_focus: false,
-                panes: vec![(test_pane("%42"), PaneGitInfo::default())],
+                panes: vec![test_pane("%42")],
             },
         ];
 
@@ -197,10 +195,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "alpha".into(),
             has_focus: true,
-            panes: vec![
-                (test_pane("%1"), PaneGitInfo::default()),
-                (test_pane("%2"), PaneGitInfo::default()),
-            ],
+            panes: vec![test_pane("%1"), test_pane("%2")],
         }];
         state.layout.pane_row_targets = vec![
             RowTarget {

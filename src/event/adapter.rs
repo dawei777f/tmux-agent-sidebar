@@ -225,14 +225,8 @@ mod tests {
         let input = json!({"cwd": "/new/dir"});
         let event = adapter.parse("cwd-changed", &input).unwrap();
         match event {
-            AgentEvent::CwdChanged {
-                cwd,
-                worktree,
-                agent_id,
-                ..
-            } => {
+            AgentEvent::CwdChanged { cwd, agent_id, .. } => {
                 assert_eq!(cwd, "/new/dir");
-                assert!(worktree.is_none());
                 assert!(agent_id.is_none());
             }
             other => panic!("expected CwdChanged, got {:?}", other),
@@ -247,8 +241,6 @@ mod tests {
         assert!(adapter.parse("task-created", &json!({})).is_none());
         assert!(adapter.parse("task-completed", &json!({})).is_none());
         assert!(adapter.parse("teammate-idle", &json!({})).is_none());
-        assert!(adapter.parse("worktree-create", &json!({})).is_none());
-        assert!(adapter.parse("worktree-remove", &json!({})).is_none());
     }
 
     #[test]
@@ -336,11 +328,6 @@ mod tests {
                 )
                 .is_none()
         );
-        assert!(
-            adapter
-                .parse("worktree-remove", &json!({"worktree_path": "/tmp/wt"}))
-                .is_none()
-        );
     }
 
     #[test]
@@ -363,29 +350,6 @@ mod tests {
                 assert_eq!(permission_mode, "auto");
             }
             other => panic!("expected StopFailure, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn claude_stop_with_worktree() {
-        let adapter = resolve_adapter("claude").unwrap();
-        let input = json!({
-            "cwd": "/tmp/wt",
-            "permission_mode": "auto",
-            "worktree": {
-                "name": "wt",
-                "path": "/tmp/wt",
-                "branch": "feat",
-                "originalRepoDir": "/home/user/repo"
-            }
-        });
-        let event = adapter.parse("stop", &input).unwrap();
-        match event {
-            AgentEvent::Stop { worktree, .. } => {
-                let wt = worktree.unwrap();
-                assert_eq!(wt.original_repo_dir, "/home/user/repo");
-            }
-            other => panic!("expected Stop, got {:?}", other),
         }
     }
 }

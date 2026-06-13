@@ -1,10 +1,10 @@
 pub mod capture;
 mod hook;
 mod label;
+mod plugin_init;
 pub mod plugin_state;
 pub(crate) mod setup;
 pub(crate) mod shared_html;
-mod spawn;
 pub(crate) mod toggle;
 
 use std::io::Read;
@@ -22,10 +22,10 @@ pub fn run(args: &[String]) -> Option<i32> {
         "toggle" => toggle::cmd_toggle(rest),
         "toggle-all" => toggle::cmd_toggle_all(rest),
         "auto-close" => toggle::cmd_auto_close(rest),
+        "notify-focus" => cmd_notify_focus(rest),
+        "plugin-init" => plugin_init::cmd_plugin_init(rest),
         "set-status" => cmd_set_status(rest),
-        "spawn" => spawn::cmd_spawn(rest),
         "capture" => capture::cmd_capture(rest),
-        "daemon" => crate::daemon::run_daemon_from_cli(),
         "--version" | "version" => {
             println!("{}", crate::VERSION);
             0
@@ -48,7 +48,7 @@ fn read_stdin_json() -> serde_json::Value {
 }
 
 fn tmux_pane() -> String {
-    std::env::var("TMUX_PANE").unwrap_or_default()
+    std::env::var("RMUX_PANE").unwrap_or_default()
 }
 
 fn local_time_hhmm() -> String {
@@ -86,9 +86,7 @@ fn set_attention(pane: &str, state: &str) {
 /// Canonicalize a string before storing it in a tmux pane option. Tmux's
 /// pane-option format uses `|` as a field separator and `\n` as a record
 /// terminator, so both must be replaced with spaces to keep the stored
-/// value a single safe field. Readers that compare against raw process
-/// data (e.g. the bg-shell ps sweep) must apply the same normalization
-/// so round-tripping through storage doesn't silently break equality.
+/// value a single safe field.
 pub(crate) fn sanitize_tmux_value(s: &str) -> String {
     s.replace(['\n', '|'], " ")
 }
@@ -105,6 +103,25 @@ fn cmd_set_status(args: &[String]) -> i32 {
         return 0;
     }
     set_status(&pane, status);
+    0
+}
+
+fn cmd_notify_focus(args: &[String]) -> i32 {
+    let Some(window_id) = args.first() else {
+        return 0;
+    };
+    let format = format!("#{{{}}}", tmux::SIDEBAR_PID);
+    let Ok(output) = tmux::list_panes_formatted(Some(window_id), false, &format) else {
+        return 0;
+    };
+    for pid in output
+        .lines()
+        .filter_map(|line| line.trim().parse::<libc::pid_t>().ok())
+    {
+        unsafe {
+            libc::kill(pid, libc::SIGUSR1);
+        }
+    }
     0
 }
 

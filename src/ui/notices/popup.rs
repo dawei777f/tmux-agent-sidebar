@@ -19,17 +19,6 @@ const PROMPT_LABEL: &str = "[prompt]";
 /// reverting to `[copy]`.
 const COPIED_FEEDBACK_DURATION: std::time::Duration = std::time::Duration::from_secs(1);
 
-fn notices_popup_version_text(notice: Option<&crate::version::UpdateNotice>) -> Option<String> {
-    if debug_forced_display() {
-        Some(match notice {
-            Some(notice) => format!("v{} -> v{}", notice.local_version, notice.latest_version),
-            None => format!("v{} -> v{}", crate::VERSION, crate::VERSION),
-        })
-    } else {
-        notice.map(|notice| format!("v{} -> v{}", notice.local_version, notice.latest_version))
-    }
-}
-
 /// Description of how the `Plugin / claude` sub-item should render.
 /// `body` is the text that appears after `- ` on the sub-item line, and
 /// `show_prompt_button` toggles the right-aligned `[prompt]` clickable
@@ -50,15 +39,10 @@ fn notices_popup_plugin_subitem(notice: Option<&ClaudePluginNotice>) -> Option<P
             body: "cleanup".to_string(),
             show_prompt_button: true,
         }),
-        (_, Some(ClaudePluginNotice::Stale)) => Some(PluginSubItem {
-            body: "run /plugin update".to_string(),
-            show_prompt_button: false,
-        }),
-        // Debug forced-display fallback when no real notice is set: show
-        // the Stale hint so layout is exercised.
+        // Debug forced-display fallback when no real notice is set.
         (true, None) => Some(PluginSubItem {
-            body: "run /plugin update".to_string(),
-            show_prompt_button: false,
+            body: "migrate".to_string(),
+            show_prompt_button: true,
         }),
         (false, None) => None,
     }
@@ -78,8 +62,6 @@ const LABEL_MAX_WIDTH: usize = {
 pub(in crate::ui) fn render_notices_popup(frame: &mut Frame, state: &mut AppState, area: Rect) {
     let theme = &state.theme;
     let groups = state.notices.missing_hook_groups.clone();
-    let version_text = notices_popup_version_text(state.version_notice.as_ref());
-    let show_version = debug_forced_display() || version_text.is_some();
     let show_hooks = debug_forced_display() || !groups.is_empty();
     let plugin_subitem = notices_popup_plugin_subitem(state.notices.claude_plugin_notice.as_ref());
     let copied_agent: Option<String> = state
@@ -95,14 +77,6 @@ pub(in crate::ui) fn render_notices_popup(frame: &mut Frame, state: &mut AppStat
     let title = "Notices";
     let mut widest_line = display_width(title) + 1;
     let mut lines_len = 1usize;
-    if let Some(ref text) = version_text {
-        widest_line = widest_line.max(display_width(&format!("{}New Version", SECTION_INDENT)));
-        widest_line = widest_line.max(display_width(&format!("{}{}", ITEM_INDENT, text)));
-        lines_len += 1;
-    }
-    if show_version {
-        lines_len += 1;
-    }
     if let Some(ref sub) = plugin_subitem {
         widest_line = widest_line.max(display_width(&format!("{}Plugin", SECTION_INDENT)));
         widest_line = widest_line.max(display_width(&format!("{}claude", ITEM_INDENT)));
@@ -201,19 +175,6 @@ pub(in crate::ui) fn render_notices_popup(frame: &mut Frame, state: &mut AppStat
         format!(" {}", title_text),
         Style::default().fg(theme.text_active),
     );
-
-    if let Some(text) = version_text {
-        push_padded(
-            &mut lines,
-            format!("{}New Version", SECTION_INDENT),
-            Style::default().fg(theme.accent),
-        );
-        push_padded(
-            &mut lines,
-            format!("{}{}", ITEM_INDENT, text),
-            Style::default().fg(theme.status_waiting),
-        );
-    }
 
     if let Some(sub) = plugin_subitem {
         push_padded(
@@ -370,12 +331,8 @@ mod tests {
     use crate::state::NoticesMissingHookGroup;
     use ratatui::{Terminal, backend::TestBackend};
 
-    fn state_with(version: Option<(&str, &str)>, groups: Vec<(&str, Vec<&str>)>) -> AppState {
+    fn state_with(groups: Vec<(&str, Vec<&str>)>) -> AppState {
         let mut state = AppState::new(String::new());
-        state.version_notice = version.map(|(local, latest)| crate::version::UpdateNotice {
-            local_version: local.into(),
-            latest_version: latest.into(),
-        });
         state.notices.missing_hook_groups = groups
             .into_iter()
             .map(|(agent, hooks)| NoticesMissingHookGroup {
@@ -383,12 +340,6 @@ mod tests {
                 hooks: hooks.into_iter().map(String::from).collect(),
             })
             .collect();
-        state
-    }
-
-    fn state_with_plugin_stale() -> AppState {
-        let mut state = AppState::new(String::new());
-        state.notices.claude_plugin_notice = Some(ClaudePluginNotice::Stale);
         state
     }
 
@@ -448,10 +399,6 @@ mod tests {
     #[test]
     fn snapshot_notices_popup_layout() {
         let mut state = AppState::new(String::new());
-        state.version_notice = Some(crate::version::UpdateNotice {
-            local_version: "0.2.6".into(),
-            latest_version: "0.2.7".into(),
-        });
         state.notices.missing_hook_groups = vec![
             NoticesMissingHookGroup {
                 agent: "claude".into(),
@@ -465,17 +412,15 @@ mod tests {
 
         let text = render_notices_popup_text(&mut state, 40, 16);
         insta::assert_snapshot!(text, @"
-        ┌───────────────────────┐
-        │ Notices               │
-        │   New Version         │
-        │     v0.2.6 -> v0.2.7  │
-        │   Missing hooks       │
-        │     claude            │
-        │     - SessionStart    │
-        │     - Stop            │
-        │     codex       [copy]│
-        │     - Stop            │
-        └───────────────────────┘
+        ┌──────────────────────┐
+        │ Notices              │
+        │   Missing hooks      │
+        │     claude           │
+        │     - SessionStart   │
+        │     - Stop           │
+        │     codex      [copy]│
+        │     - Stop           │
+        └──────────────────────┘
         ");
     }
 
@@ -528,69 +473,6 @@ mod tests {
     }
 
     #[test]
-    fn rendering_skips_copy_target_for_plugin_stale() {
-        // Stale sub-item is informational only — no [prompt]
-        // button, so no copy target should be registered.
-        let mut state = state_with_plugin_stale();
-        let _ = render_notices_popup_text(&mut state, 40, 10);
-        assert!(state.notices.copy_targets.is_empty());
-    }
-
-    #[test]
-    fn snapshot_notices_popup_plugin_stale_only() {
-        let mut state = state_with_plugin_stale();
-        let text = render_notices_popup_text(&mut state, 40, 10);
-        insta::assert_snapshot!(text, @r"
-        ┌───────────────────────────┐
-        │ Notices                   │
-        │   Plugin                  │
-        │     claude                │
-        │       run /plugin update  │
-        └───────────────────────────┘
-        ");
-    }
-
-    #[test]
-    fn snapshot_notices_popup_plugin_stale_with_codex_missing_hooks() {
-        // Plugin install path: the Claude row is suppressed (the plugin
-        // owns it) and only Codex shows up in the missing-hooks section.
-        let mut state = state_with_plugin_stale();
-        state.notices.missing_hook_groups = vec![NoticesMissingHookGroup {
-            agent: "codex".into(),
-            hooks: vec!["Stop".into()],
-        }];
-        let text = render_notices_popup_text(&mut state, 40, 14);
-        insta::assert_snapshot!(text, @r"
-        ┌───────────────────────────┐
-        │ Notices                   │
-        │   Plugin                  │
-        │     claude                │
-        │       run /plugin update  │
-        │   Missing hooks           │
-        │     codex           [copy]│
-        │     - Stop                │
-        └───────────────────────────┘
-        ");
-    }
-
-    #[test]
-    fn snapshot_notices_popup_version_only() {
-        let mut state = AppState::new(String::new());
-        state.version_notice = Some(crate::version::UpdateNotice {
-            local_version: "0.2.6".into(),
-            latest_version: "0.2.7".into(),
-        });
-        let text = render_notices_popup_text(&mut state, 40, 10);
-        insta::assert_snapshot!(text, @"
-        ┌───────────────────────┐
-        │ Notices               │
-        │   New Version         │
-        │     v0.2.6 -> v0.2.7  │
-        └───────────────────────┘
-        ");
-    }
-
-    #[test]
     fn snapshot_notices_popup_hooks_only() {
         let mut state = AppState::new(String::new());
         state.notices.missing_hook_groups = vec![
@@ -619,7 +501,7 @@ mod tests {
 
     #[test]
     fn snapshot_notices_popup_single_agent_single_hook() {
-        let mut state = state_with(None, vec![("claude", vec!["Stop"])]);
+        let mut state = state_with(vec![("claude", vec!["Stop"])]);
         let text = render_notices_popup_text(&mut state, 40, 8);
         insta::assert_snapshot!(text, @"
         ┌──────────────────┐
@@ -633,19 +515,16 @@ mod tests {
 
     #[test]
     fn snapshot_notices_popup_single_agent_many_hooks() {
-        let mut state = state_with(
-            None,
-            vec![(
-                "claude",
-                vec![
-                    "SessionStart",
-                    "SessionEnd",
-                    "Stop",
-                    "UserPromptSubmit",
-                    "Notification",
-                ],
-            )],
-        );
+        let mut state = state_with(vec![(
+            "claude",
+            vec![
+                "SessionStart",
+                "SessionEnd",
+                "Stop",
+                "UserPromptSubmit",
+                "Notification",
+            ],
+        )]);
         let text = render_notices_popup_text(&mut state, 40, 12);
         insta::assert_snapshot!(text, @"
         ┌─────────────────────────┐
@@ -662,30 +541,11 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_notices_popup_version_and_single_hook() {
-        let mut state = state_with(Some(("0.2.6", "0.2.7")), vec![("claude", vec!["Stop"])]);
-        let text = render_notices_popup_text(&mut state, 40, 10);
-        insta::assert_snapshot!(text, @"
-        ┌───────────────────────┐
-        │ Notices               │
-        │   New Version         │
-        │     v0.2.6 -> v0.2.7  │
-        │   Missing hooks       │
-        │     claude            │
-        │     - Stop            │
-        └───────────────────────┘
-        ");
-    }
-
-    #[test]
     fn snapshot_notices_popup_long_hook_name_truncated_to_narrow_width() {
-        let mut state = state_with(
-            None,
-            vec![(
-                "claude",
-                vec!["ThisIsAnExtremelyLongHookNameThatWillDefinitelyOverflow"],
-            )],
-        );
+        let mut state = state_with(vec![(
+            "claude",
+            vec!["ThisIsAnExtremelyLongHookNameThatWillDefinitelyOverflow"],
+        )]);
         // Deliberately narrow terminal to force truncation.
         let text = render_notices_popup_text(&mut state, 20, 8);
         insta::assert_snapshot!(text, @"
@@ -702,7 +562,7 @@ mod tests {
 
     #[test]
     fn snapshot_notices_popup_shows_copied_label_for_recently_copied_agent() {
-        let mut state = state_with(None, vec![("claude", vec!["Stop"])]);
+        let mut state = state_with(vec![("claude", vec!["Stop"])]);
         state.notices.copied_at = Some(("claude".into(), std::time::Instant::now()));
         let text = render_notices_popup_text(&mut state, 40, 8);
         insta::assert_snapshot!(text, @"
@@ -718,10 +578,7 @@ mod tests {
     #[test]
     fn snapshot_notices_popup_copied_label_stays_per_agent() {
         // Only codex was copied recently — claude must still show `[copy]`.
-        let mut state = state_with(
-            None,
-            vec![("claude", vec!["Stop"]), ("codex", vec!["Stop"])],
-        );
+        let mut state = state_with(vec![("claude", vec!["Stop"]), ("codex", vec!["Stop"])]);
         state.notices.copied_at = Some(("codex".into(), std::time::Instant::now()));
         let text = render_notices_popup_text(&mut state, 40, 10);
         insta::assert_snapshot!(text, @"
@@ -738,7 +595,7 @@ mod tests {
 
     #[test]
     fn snapshot_notices_popup_copied_label_expires_after_feedback_window() {
-        let mut state = state_with(None, vec![("claude", vec!["Stop"])]);
+        let mut state = state_with(vec![("claude", vec!["Stop"])]);
         // Past the feedback window → should render `[copy]` again.
         state.notices.copied_at = Some((
             "claude".into(),
@@ -759,7 +616,7 @@ mod tests {
 
     #[test]
     fn snapshot_notices_popup_unknown_agent_has_no_copy_label() {
-        let mut state = state_with(None, vec![("gemini", vec!["Stop"])]);
+        let mut state = state_with(vec![("gemini", vec!["Stop"])]);
         let text = render_notices_popup_text(&mut state, 40, 8);
         insta::assert_snapshot!(text, @"
         ┌──────────────────┐
@@ -778,10 +635,7 @@ mod tests {
         // Claude must NOT register a copy target in the missing-hooks
         // section — its [prompt] button lives in the Plugin section
         // and the two would race on the shared `[copied]` feedback.
-        let mut state = state_with(
-            None,
-            vec![("claude", vec!["Stop"]), ("codex", vec!["Stop"])],
-        );
+        let mut state = state_with(vec![("claude", vec!["Stop"]), ("codex", vec!["Stop"])]);
         let _ = render_notices_popup_text(&mut state, 40, 10);
         assert_eq!(state.notices.copy_targets.len(), 1);
         assert_eq!(state.notices.copy_targets[0].agent, "codex");
@@ -794,14 +648,14 @@ mod tests {
 
     #[test]
     fn rendering_skips_copy_targets_for_unknown_agents() {
-        let mut state = state_with(None, vec![("gemini", vec!["Stop"])]);
+        let mut state = state_with(vec![("gemini", vec!["Stop"])]);
         let _ = render_notices_popup_text(&mut state, 40, 8);
         assert!(state.notices.copy_targets.is_empty());
     }
 
     #[test]
     fn rendering_skips_copy_targets_when_popup_too_narrow() {
-        let mut state = state_with(None, vec![("codex", vec!["ThisIsAnExtremelyLongHookName"])]);
+        let mut state = state_with(vec![("codex", vec!["ThisIsAnExtremelyLongHookName"])]);
         let _ = render_notices_popup_text(&mut state, 20, 8);
         assert!(state.notices.copy_targets.is_empty());
     }
@@ -812,7 +666,7 @@ mod tests {
         // AFTER `.min(area)` so the popup_rect could exceed the
         // terminal buffer on a tiny sidebar. Guard now drops the
         // hit-test region entirely when there is no room.
-        let mut state = state_with(None, vec![("codex", vec!["Stop"])]);
+        let mut state = state_with(vec![("codex", vec!["Stop"])]);
         // 1 column × 2 rows leaves no space for a bordered popup.
         let _ = render_notices_popup_text(&mut state, 1, 2);
         assert!(
@@ -828,7 +682,7 @@ mod tests {
         // below the visible popup would land on a hidden hit
         // region. The paragraph scrolls nothing, so rows beyond
         // `inner.height` should be treated as invisible.
-        let mut state = state_with(None, vec![("codex", vec!["Stop"])]);
+        let mut state = state_with(vec![("codex", vec!["Stop"])]);
         // Force the popup taller than the clip window — height 5
         // means `popup_height` gets clamped and the "[copy]" row
         // for codex (row index 3 within inner) should fall outside
@@ -850,7 +704,7 @@ mod tests {
 
     #[test]
     fn rendering_copy_target_reserves_label_slot_flush_right() {
-        let mut state = state_with(None, vec![("codex", vec!["Stop"])]);
+        let mut state = state_with(vec![("codex", vec!["Stop"])]);
         let _ = render_notices_popup_text(&mut state, 40, 8);
         let target = &state.notices.copy_targets[0];
         // The popup is left-aligned at x=0 with a single-column border.

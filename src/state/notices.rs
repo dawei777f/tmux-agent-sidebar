@@ -15,12 +15,10 @@ pub struct NoticesState {
     /// Missing hooks grouped per agent, shown in the "Missing hooks"
     /// section of the popup.
     pub missing_hook_groups: Vec<NoticesMissingHookGroup>,
-    /// Status of the `tmux-agent-sidebar` Claude Code plugin install
-    /// (whether it is installed, and whether any tracked file in its
-    /// cache differs from the copy embedded into this binary). Resolved
-    /// once from `~/.claude/plugins/installed_plugins.json` and cached
-    /// for the lifetime of the TUI process — restart the sidebar after
-    /// a `/plugin install`, `/plugin uninstall`, or `/plugin update` to
+    /// Status of the `tmux-agent-sidebar` Claude Code plugin install.
+    /// Resolved once from `~/.claude/plugins/installed_plugins.json`
+    /// and cached for the lifetime of the TUI process. Restart the
+    /// sidebar after installing or uninstalling the Claude plugin to
     /// pick up the change. `claude_plugin_notice` and the missing-hooks
     /// Claude filter are derived from this field.
     pub claude_plugin_status: ClaudePluginStatus,
@@ -50,9 +48,8 @@ pub struct NoticesMissingHookGroup {
 
 /// Notice surfaced in the popup's `Plugin / claude` section. The
 /// variants are mutually exclusive and ordered by urgency:
-/// `DuplicateHooks` > `InstallRecommended` > `Stale`. When the plugin
-/// is installed, its cached hooks match the embedded snapshot, and the
-/// user has no residual manual hook entries, no notice is set.
+/// `DuplicateHooks` > `InstallRecommended`. When the plugin is installed
+/// and the user has no residual manual hook entries, no notice is set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClaudePluginNotice {
     /// The Claude Code plugin is not installed. The popup offers a
@@ -62,19 +59,8 @@ pub enum ClaudePluginNotice {
     /// The plugin is installed AND the user still has legacy
     /// `tmux-agent-sidebar/hook.sh` entries in `~/.claude/settings.json`.
     /// Every hook fires twice in this state — once via the plugin, once
-    /// via the manual setting. Takes precedence over `Stale` because it
-    /// is an actively-broken state, not just a pending update.
+    /// via the manual setting.
     DuplicateHooks,
-    /// The plugin is installed but at least one file tracked by
-    /// `EMBEDDED_PLUGIN_FILES` differs between its cache and the
-    /// snapshot embedded in the running binary. The user needs
-    /// `/plugin update` so Claude Code re-reads the affected files.
-    /// Comparing file content (rather than the manifest `version`
-    /// string) means the notice only fires when an update actually
-    /// changes fork behavior — the `hook.sh` wrapper already runs the
-    /// latest binary on every invocation, so a bare version bump with
-    /// no content changes is silent.
-    Stale,
 }
 
 /// Click target for the `copy` label next to an agent in the notices popup.
@@ -89,10 +75,9 @@ impl AppState {
     ///
     /// Every input is static for the sidebar's lifetime:
     /// `claude_plugin_status` and `claude_settings_has_residual_hooks`
-    /// are resolved at `main.rs` startup, and `settings.json` /
-    /// `hooks.json` edits only take effect after a sidebar restart —
-    /// matching the restart-required contract already documented for
-    /// `/plugin install`. So this runs once from `main.rs` instead of
+    /// are resolved at `main.rs` startup, and `settings.json` edits
+    /// only take effect after a sidebar restart. So this runs once
+    /// from `main.rs` instead of
     /// being pinned to the per-tick refresh loop, and the ⓘ badge no
     /// longer depends on which pane happens to be focused.
     ///
@@ -153,7 +138,7 @@ impl AppState {
 
     /// Copy the LLM setup prompt for the given agent (`claude` / `codex`)
     /// to every clipboard-reachable surface: `arboard` for the local OS
-    /// clipboard, `tmux set-buffer` for the tmux paste buffer, and a
+    /// clipboard, rmux set-buffer API for the tmux paste buffer, and a
     /// queued OSC 52 escape (flushed by the main loop) for upstream
     /// terminals over SSH. Returns true only when at least one *verifiable*
     /// destination succeeded so the caller can decide whether to show the
@@ -165,11 +150,7 @@ impl AppState {
         let clip_ok = arboard::Clipboard::new()
             .and_then(|mut c| c.set_text(prompt.clone()))
             .is_ok();
-        let tmux_ok = std::process::Command::new("tmux")
-            .args(["set-buffer", &prompt])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+        let tmux_ok = crate::tmux::set_buffer(&prompt).is_ok();
         // OSC 52 is queued regardless — it reaches the upstream terminal
         // even when the local sinks above fail (SSH case). But we do not
         // count it toward the feedback because there is no success signal.
@@ -192,7 +173,7 @@ impl AppState {
 ///
 /// `claude_plugin_present` gates Claude visibility: when the plugin is
 /// installed, it owns the hook wiring so Claude is filtered out (the
-/// `Plugin / claude` section reports stale-version state instead). When
+/// `Plugin / claude` section reports duplicate-hook state instead). When
 /// the plugin is **not** installed, Claude must surface concrete
 /// missing-hook diagnostics for users still on the manual
 /// `~/.claude/settings.json` path. Codex is unaffected — Codex CLI has
@@ -228,13 +209,8 @@ pub(super) fn compute_missing_hook_groups(
 /// - No plugin install → `InstallRecommended` (the migration prompt
 ///   handles legacy cleanup as part of the same step, so `has_residual`
 ///   does not matter here).
-/// - Plugin installed + residual entries → `DuplicateHooks`. Takes
-///   precedence over `Stale` because hooks are firing twice right now
-///   and the cleanup is more urgent than a pending update.
-/// - Plugin installed, no residual, any tracked cached file differs
-///   from its embedded snapshot → `Stale`.
-/// - Plugin installed, no residual, every tracked cached file matches
-///   → no notice.
+/// - Plugin installed + residual entries → `DuplicateHooks`.
+/// - Plugin installed, no residual entries → no notice.
 pub(super) fn compute_claude_plugin_notice(
     status: &ClaudePluginStatus,
     has_residual_hooks: bool,
@@ -244,9 +220,6 @@ pub(super) fn compute_claude_plugin_notice(
     }
     if has_residual_hooks {
         return Some(ClaudePluginNotice::DuplicateHooks);
-    }
-    if status.cache_outdated {
-        return Some(ClaudePluginNotice::Stale);
     }
     None
 }
@@ -292,8 +265,7 @@ mod tests {
     #[test]
     fn missing_hook_groups_skips_claude_when_plugin_installed() {
         // The plugin owns the hook wiring once installed, so Claude
-        // must NOT appear under Missing hooks (the Plugin section
-        // reports stale-version state separately).
+        // must NOT appear under Missing hooks.
         let groups = compute_missing_hook_groups(
             /* claude_plugin_present */ true,
             vec!["claude".to_string()],
@@ -340,18 +312,8 @@ mod tests {
 
     // ─── compute_claude_plugin_notice ────────────────────────────────
 
-    const STATUS_ABSENT: ClaudePluginStatus = ClaudePluginStatus {
-        installed: false,
-        cache_outdated: false,
-    };
-    const STATUS_IN_SYNC: ClaudePluginStatus = ClaudePluginStatus {
-        installed: true,
-        cache_outdated: false,
-    };
-    const STATUS_OUTDATED: ClaudePluginStatus = ClaudePluginStatus {
-        installed: true,
-        cache_outdated: true,
-    };
+    const STATUS_ABSENT: ClaudePluginStatus = ClaudePluginStatus { installed: false };
+    const STATUS_IN_SYNC: ClaudePluginStatus = ClaudePluginStatus { installed: true };
 
     #[test]
     fn plugin_notice_install_recommended_when_plugin_missing() {
@@ -374,23 +336,9 @@ mod tests {
     }
 
     #[test]
-    fn plugin_notice_stale_when_cached_hooks_differ_and_no_residual() {
-        assert_eq!(
-            compute_claude_plugin_notice(&STATUS_OUTDATED, false),
-            Some(ClaudePluginNotice::Stale)
-        );
-    }
-
-    #[test]
-    fn plugin_notice_duplicate_hooks_when_residual_overrides_stale() {
+    fn plugin_notice_duplicate_hooks_when_residual_hooks_exist() {
         // Plugin is installed AND legacy entries are still in
-        // settings.json. Hooks fire twice. The DuplicateHooks notice
-        // takes precedence over Stale even when the cached hooks.json
-        // is also out of date — cleanup is the more urgent action.
-        assert_eq!(
-            compute_claude_plugin_notice(&STATUS_OUTDATED, true),
-            Some(ClaudePluginNotice::DuplicateHooks)
-        );
+        // settings.json. Hooks fire twice, so cleanup is required.
         assert_eq!(
             compute_claude_plugin_notice(&STATUS_IN_SYNC, true),
             Some(ClaudePluginNotice::DuplicateHooks)

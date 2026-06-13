@@ -1,6 +1,5 @@
 use super::location::{pane_writes_allowed, sync_pane_location};
-use super::pending::{PENDING_SESSION_END, PENDING_WORKTREE_REMOVE};
-use crate::event::WorktreeInfo;
+use super::pending::PENDING_SESSION_END;
 use crate::tmux;
 
 /// Bundle of hook-payload fields shared by 6 `AgentEvent` variants
@@ -11,7 +10,6 @@ pub(in crate::cli::hook) struct AgentContext<'a> {
     pub(in crate::cli::hook) agent: &'a str,
     pub(in crate::cli::hook) cwd: &'a str,
     pub(in crate::cli::hook) permission_mode: &'a str,
-    pub(in crate::cli::hook) worktree: &'a Option<WorktreeInfo>,
     pub(in crate::cli::hook) session_id: &'a Option<String>,
 }
 
@@ -19,14 +17,12 @@ pub(in crate::cli::hook) fn make_ctx<'a>(
     agent: &'a str,
     cwd: &'a str,
     permission_mode: &'a str,
-    worktree: &'a Option<WorktreeInfo>,
     session_id: &'a Option<String>,
 ) -> AgentContext<'a> {
     AgentContext {
         agent,
         cwd,
         permission_mode,
-        worktree,
         session_id,
     }
 }
@@ -36,11 +32,11 @@ pub(in crate::cli::hook) fn set_agent_meta(pane: &str, ctx: &AgentContext<'_>) {
     // `@pane_permission_mode` is parent-owned: a child agent can be in
     // a different mode (e.g. plan vs. default) and overwriting the
     // parent's value here would flip the badge mid-session. Gate the
-    // write behind the same subagent guard as the cwd/worktree fields.
+    // write behind the same subagent guard as the cwd/session fields.
     if !ctx.permission_mode.is_empty() && pane_writes_allowed(pane) {
         tmux::set_pane_option(pane, tmux::PANE_PERMISSION_MODE, ctx.permission_mode);
     }
-    sync_pane_location(pane, ctx.cwd, ctx.worktree, ctx.session_id);
+    sync_pane_location(pane, ctx.cwd, ctx.session_id);
 }
 
 pub(in crate::cli::hook) fn clear_run_state(pane: &str) {
@@ -62,11 +58,8 @@ pub(in crate::cli::hook) fn clear_all_meta(pane: &str) {
         tmux::PANE_SUBAGENTS,
         tmux::PANE_CWD,
         tmux::PANE_PERMISSION_MODE,
-        tmux::PANE_WORKTREE_NAME,
-        tmux::PANE_WORKTREE_BRANCH,
         tmux::PANE_SESSION_ID,
         PENDING_SESSION_END,
-        PENDING_WORKTREE_REMOVE,
     ] {
         tmux::unset_pane_option(pane, key);
     }
@@ -96,33 +89,24 @@ mod tests {
         let agent = "claude".to_string();
         let cwd = "/tmp".to_string();
         let pm = "auto".to_string();
-        let worktree: Option<WorktreeInfo> = None;
         let sid: Option<String> = None;
-        let ctx = make_ctx(&agent, &cwd, &pm, &worktree, &sid);
+        let ctx = make_ctx(&agent, &cwd, &pm, &sid);
         assert_eq!(ctx.agent, "claude");
         assert_eq!(ctx.cwd, "/tmp");
         assert_eq!(ctx.permission_mode, "auto");
-        assert!(ctx.worktree.is_none());
         assert!(ctx.session_id.is_none());
     }
 
     #[test]
-    fn make_ctx_preserves_worktree_and_session_id() {
+    fn make_ctx_preserves_session_id() {
         let agent = "codex".to_string();
         let cwd = "/src".to_string();
         let pm = "plan".to_string();
-        let worktree = Some(WorktreeInfo {
-            name: "feat".into(),
-            path: "/tmp/wt".into(),
-            branch: "feature/x".into(),
-            original_repo_dir: "/home/user/repo".into(),
-        });
         let sid = Some("sess-abc".to_string());
-        let ctx = make_ctx(&agent, &cwd, &pm, &worktree, &sid);
+        let ctx = make_ctx(&agent, &cwd, &pm, &sid);
         assert_eq!(ctx.agent, "codex");
         assert_eq!(ctx.cwd, "/src");
         assert_eq!(ctx.permission_mode, "plan");
-        assert_eq!(ctx.worktree.as_ref().map(|w| w.name.as_str()), Some("feat"));
         assert_eq!(ctx.session_id.as_deref(), Some("sess-abc"));
     }
 
@@ -211,7 +195,6 @@ mod tests {
             agent: "claude",
             cwd: "/repo",
             permission_mode: "default",
-            worktree: &None,
             session_id: &None,
         };
         set_agent_meta(pane, &ctx);
@@ -232,7 +215,6 @@ mod tests {
             agent: "claude",
             cwd: "/repo",
             permission_mode: "plan",
-            worktree: &None,
             session_id: &None,
         };
         set_agent_meta(pane, &ctx);
@@ -268,13 +250,10 @@ mod tests {
             tmux::PANE_SUBAGENTS,
             tmux::PANE_CWD,
             tmux::PANE_PERMISSION_MODE,
-            tmux::PANE_WORKTREE_NAME,
-            tmux::PANE_WORKTREE_BRANCH,
             tmux::PANE_SESSION_ID,
             tmux::PANE_STARTED_AT,
             tmux::PANE_WAIT_REASON,
             PENDING_SESSION_END,
-            PENDING_WORKTREE_REMOVE,
         ] {
             tmux::test_mock::set(pane, key, "x");
         }
@@ -288,13 +267,10 @@ mod tests {
             tmux::PANE_SUBAGENTS,
             tmux::PANE_CWD,
             tmux::PANE_PERMISSION_MODE,
-            tmux::PANE_WORKTREE_NAME,
-            tmux::PANE_WORKTREE_BRANCH,
             tmux::PANE_SESSION_ID,
             tmux::PANE_STARTED_AT,
             tmux::PANE_WAIT_REASON,
             PENDING_SESSION_END,
-            PENDING_WORKTREE_REMOVE,
         ] {
             assert!(
                 !tmux::test_mock::contains(pane, key),

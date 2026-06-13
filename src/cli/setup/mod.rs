@@ -20,7 +20,7 @@ const _CODEX_TABLE_REACHABLE: &[HookRegistration] = CodexAdapter::HOOK_REGISTRAT
 /// not interpret specially, it is returned as-is. This matters for the
 /// common case (`/Users/alice/.../hook.sh`) because aggressive quoting
 /// would suppress tilde expansion on the fallback path
-/// `~/.tmux/plugins/tmux-agent-sidebar/hook.sh` and break the emitted
+/// `~/.rmux/plugins/tmux-agent-sidebar/hook.sh` and break the emitted
 /// hook commands. This mirrors Python's `shlex.quote` behaviour.
 ///
 /// Slow path: wrap the value in single quotes and escape any internal
@@ -144,7 +144,7 @@ fn collect_hook_specs(config: &serde_json::Value) -> Vec<HookSpec> {
 ///
 /// Comparison uses `trigger`, `matcher`, and the canonicalized hook command.
 /// The command path is resolved through `std::fs::canonicalize` so a
-/// symlinked plugin directory (`~/.tmux/plugins/tmux-agent-sidebar/hook.sh`
+/// symlinked plugin directory (`~/.rmux/plugins/tmux-agent-sidebar/hook.sh`
 /// → `~/Programming/tmux-agent-sidebar/hook.sh`) still compares equal, while
 /// configs pointing at a stale or renamed checkout canonicalize to a
 /// different real path (or fail to canonicalize at all) and are flagged as
@@ -337,7 +337,7 @@ pub(crate) struct ResolvedHookScript {
     pub detected: bool,
 }
 
-const FALLBACK_HOOK_SCRIPT: &str = "~/.tmux/plugins/tmux-agent-sidebar/hook.sh";
+const FALLBACK_HOOK_SCRIPT: &str = "~/.rmux/plugins/tmux-agent-sidebar/hook.sh";
 
 /// Resolve the absolute path of `hook.sh` to embed in the generated
 /// commands. Strategy:
@@ -348,7 +348,7 @@ const FALLBACK_HOOK_SCRIPT: &str = "~/.tmux/plugins/tmux-agent-sidebar/hook.sh";
 ///    project already supports:
 ///      - `<plugin>/bin/tmux-agent-sidebar` → `<plugin>/hook.sh`
 ///      - `<plugin>/target/release/tmux-agent-sidebar` → `<plugin>/hook.sh`
-/// 3. Fallback: the literal string `~/.tmux/plugins/tmux-agent-sidebar/hook.sh`
+/// 3. Fallback: the literal string `~/.rmux/plugins/tmux-agent-sidebar/hook.sh`
 ///    (tilde intentionally not expanded, matches README).
 ///
 /// When step 1 or 2 succeeds, `detected = true`. When step 3 kicks in,

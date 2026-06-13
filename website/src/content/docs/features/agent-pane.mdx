@@ -8,7 +8,7 @@ import agentPane from '../../../assets/captures/agent-pane-focus.png';
 
 <Image src={agentPane} alt="agent pane screenshot" densities={[1.5, 2]} />
 
-The sidebar renders one row per agent pane across all tmux sessions and windows. Each row is packed with live metadata pulled from the agent's hooks and from tmux itself.
+The sidebar renders one row per agent pane across all rmux sessions and windows. Each row is packed with live metadata pulled from the agent's hooks and from rmux itself.
 
 ## Filter bar
 
@@ -62,14 +62,6 @@ When multiple signals compete on the same pane, the sidebar resolves them in thi
 
 Defaults to the agent name. Can be changed through Claude Code's `/rename`.
 
-### `+` marker
-
-Indicates the pane sits in a git worktree (any worktree, not only sidebar-created ones). Sidebar-spawned worktrees additionally show a `×` button for one-keystroke teardown. See [Worktree](/tmux-agent-sidebar/features/worktree/) for details.
-
-### Branch
-
-Current Git branch for the pane's cwd. Claude updates dynamically through the `CwdChanged` hook.
-
 ### Elapsed time
 
 Time since the last user prompt.
@@ -90,7 +82,7 @@ Synchronized from the agent's task list. Each task gets a glyph for its state; t
 
 Shown when an agent explicitly starts a Bash tool in the background, such as a long-running `npm run dev` or watch command. The sidebar moves that pane from `running` to `background` only when the hook payload includes a background flag (`run_in_background` / `runInBackground`); command text alone is not guessed.
 
-The row body surfaces the actual command so you can tell at a glance what is running, and keeps it visible even when the agent briefly flips back to `running` for another tool call. Only the most recent background Bash is tracked; if the agent launches a second one, it overwrites the first in the row. The marker clears automatically when the process exits (via a `ps` liveness sweep each refresh tick).
+The row body surfaces the actual command so you can tell at a glance what the agent reported as running. Only the most recent background Bash is tracked; if the agent launches a second one, it overwrites the first in the row.
 
 ```text
   npm run dev
@@ -98,7 +90,7 @@ The row body surfaces the actual command so you can tell at a glance what is run
 
 If the hook payload omitted the command string for some reason, the row shows a `(background shell)` placeholder so the status transition is still visible.
 
-Once the underlying process exits, the sidebar's next refresh tick (about once a second) scans `ps` for the stored command, clears the row, and downgrades the pane from `background` to `idle`. The `(background shell)` placeholder is exempt from the sweep — without a real command we cannot verify liveness, so it persists until SessionEnd.
+The background marker clears when later agent hooks report a new state, such as the next user prompt or session end.
 
 ### Subagent tree
 
@@ -109,10 +101,6 @@ Parent-child branches for spawned sub-agents. Middle entries use `├`, the last
 ├ Plan    #d4e5
 └ Bash    #dead
 ```
-
-### Listening ports
-
-Localhost ports the pane's process is listening on.
 
 ### Response arrow (`▷`)
 

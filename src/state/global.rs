@@ -5,17 +5,17 @@ use crate::tmux;
 
 use super::filter::{RepoFilter, StatusFilter};
 
-/// State shared across all sidebar instances via tmux global variables.
-/// Synced from tmux at startup and on pane focus change (SIGUSR1).
+/// State shared across all sidebar instances via rmux global variables.
+/// Synced from rmux at startup and on pane focus change (SIGUSR1).
 pub struct GlobalState {
     pub status_filter: StatusFilter,
     pub selected_pane_row: usize,
     pub repo_filter: RepoFilter,
-    /// Last filter value successfully written to tmux.
+    /// Last filter value successfully written to rmux.
     last_saved_filter: StatusFilter,
-    /// Last cursor value successfully written to tmux.
+    /// Last cursor value successfully written to rmux.
     last_saved_cursor: usize,
-    /// Last repo filter value successfully written to tmux.
+    /// Last repo filter value successfully written to rmux.
     last_saved_repo_filter: RepoFilter,
     /// When the selected cursor was last changed and still needs persisting.
     pending_cursor_save_since: Option<Instant>,
@@ -40,33 +40,21 @@ impl GlobalState {
         }
     }
 
-    /// Save filter to tmux global variable.
+    /// Save filter to rmux global variable.
     /// Only updates `last_saved_filter` on success so that a failed write
     /// does not cause sync to overwrite the user's choice.
     pub fn save_filter(&mut self) {
-        if tmux::run_tmux(&[
-            "set",
-            "-g",
-            tmux::SIDEBAR_FILTER,
-            self.status_filter.as_str(),
-        ])
-        .is_some()
-        {
+        if tmux::set_global_option(tmux::SIDEBAR_FILTER, self.status_filter.as_str()).is_ok() {
             self.last_saved_filter = self.status_filter;
         }
     }
 
-    /// Save cursor position to tmux global variable. Returns `true` when
-    /// tmux accepted the write so callers can decide whether to clear a
+    /// Save cursor position to rmux global variable. Returns `true` when
+    /// rmux accepted the write so callers can decide whether to clear a
     /// queued save or keep retrying.
     pub fn save_cursor(&mut self) -> bool {
-        if tmux::run_tmux(&[
-            "set",
-            "-g",
-            tmux::SIDEBAR_CURSOR,
-            &self.selected_pane_row.to_string(),
-        ])
-        .is_some()
+        if tmux::set_global_option(tmux::SIDEBAR_CURSOR, &self.selected_pane_row.to_string())
+            .is_ok()
         {
             self.last_saved_cursor = self.selected_pane_row;
             true
@@ -90,7 +78,7 @@ impl GlobalState {
         if queued_at.elapsed() < debounce {
             return false;
         }
-        // Only clear the pending marker on successful tmux write — otherwise
+        // Only clear the pending marker on successful rmux write — otherwise
         // a transient failure would silently drop the queued save instead of
         // retrying on the next flush tick.
         if self.save_cursor() {
@@ -101,34 +89,27 @@ impl GlobalState {
         }
     }
 
-    /// Save repo filter to tmux global variable.
+    /// Save repo filter to rmux global variable.
     pub fn save_repo_filter(&mut self) {
-        if tmux::run_tmux(&[
-            "set",
-            "-g",
-            tmux::SIDEBAR_REPO_FILTER,
-            self.repo_filter.as_str(),
-        ])
-        .is_some()
-        {
+        if tmux::set_global_option(tmux::SIDEBAR_REPO_FILTER, self.repo_filter.as_str()).is_ok() {
             self.last_saved_repo_filter = self.repo_filter.clone();
         }
     }
 
-    /// Load all global state from tmux variables.
+    /// Load all global state from rmux variables.
     /// Called at startup and on SIGUSR1 (pane focus change).
     pub fn load_from_tmux(&mut self) {
         let opts = tmux::get_all_global_options();
         self.apply_all(&opts);
     }
 
-    /// Apply all global options from tmux (filter, cursor, repo filter).
+    /// Apply all global options from rmux (filter, cursor, repo filter).
     pub fn apply_all(&mut self, opts: &HashMap<String, String>) {
         if let Some(filter_str) = opts.get(tmux::SIDEBAR_FILTER) {
-            let tmux_filter = StatusFilter::from_label(filter_str);
-            if tmux_filter != self.last_saved_filter {
-                self.status_filter = tmux_filter;
-                self.last_saved_filter = tmux_filter;
+            let rmux_filter = StatusFilter::from_label(filter_str);
+            if rmux_filter != self.last_saved_filter {
+                self.status_filter = rmux_filter;
+                self.last_saved_filter = rmux_filter;
             }
         }
         if let Some(cursor_str) = opts.get(tmux::SIDEBAR_CURSOR)
@@ -139,10 +120,10 @@ impl GlobalState {
             self.last_saved_cursor = n;
         }
         if let Some(repo_str) = opts.get(tmux::SIDEBAR_REPO_FILTER) {
-            let tmux_repo = RepoFilter::from_label(repo_str);
-            if tmux_repo != self.last_saved_repo_filter {
-                self.repo_filter = tmux_repo.clone();
-                self.last_saved_repo_filter = tmux_repo;
+            let rmux_repo = RepoFilter::from_label(repo_str);
+            if rmux_repo != self.last_saved_repo_filter {
+                self.repo_filter = rmux_repo.clone();
+                self.last_saved_repo_filter = rmux_repo;
             }
         }
     }

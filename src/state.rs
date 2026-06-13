@@ -20,12 +20,11 @@ mod timers;
 pub use filter::{RepoFilter, StatusFilter};
 pub use focus::{Focus, FocusState};
 pub use global::GlobalState;
-pub use layout::{FrameLayout, HyperlinkOverlay, RepoSpawnTarget, RowTarget, SpawnRemoveTarget};
+pub use layout::{FrameLayout, HyperlinkOverlay, RowTarget};
 pub(crate) use notices::debug_forced_display;
 pub use notices::{ClaudePluginNotice, NoticesCopyTarget, NoticesMissingHookGroup, NoticesState};
 pub use pane_runtime::{PaneRuntimeMap, PaneRuntimeState};
-pub use popup::{PopupState, SpawnField};
-pub(crate) use refresh::sweep_dead_bg_shells;
+pub use popup::PopupState;
 #[cfg(test)]
 pub(crate) use refresh::{TaskProgressDecision, classify_task_progress};
 pub use scroll::{ScrollState, ScrollStates};
@@ -35,12 +34,11 @@ pub use timers::RefreshTimers;
 pub struct AppState {
     pub now: u64,
     pub repo_groups: Vec<crate::group::RepoGroup>,
-    pub git_info_cache: crate::group::PaneGitInfoCache,
     /// Sidebar focus + pane focus tracking (sidebar_focused, focus,
     /// focused_pane_id, prev_focused_pane_id).
     pub focus_state: FocusState,
-    /// Transient one-line status banner (message + expiry) for spawn /
-    /// remove feedback. Cleared by `take_flash` once the deadline passes.
+    /// Transient one-line status banner (message + expiry). Cleared by
+    /// `take_flash` once the deadline passes.
     pub flash: Option<(String, Instant)>,
     pub spinner_frame: usize,
     /// Frame-scoped render output (pane_row_targets, line_to_row,
@@ -54,8 +52,7 @@ pub struct AppState {
     pub theme: ColorTheme,
     pub icons: StatusIcons,
     pub pane_states: PaneRuntimeMap,
-    /// Periodic-refresh clocks (port scan, session-name scan, filter
-    /// debounce, port-scan first-run flag).
+    /// Periodic-refresh clocks such as the filter click debounce.
     pub timers: RefreshTimers,
     /// Current popup state. At most one popup is open at a time; the enum
     /// variant encodes both which popup is open and its per-popup data.
@@ -105,13 +102,11 @@ pub struct AppState {
     pub pet_working_paper_x_offset: u16,
     /// Seed used to reshuffle working paper motion timing.
     pub pet_working_paper_seed: usize,
-    /// Update notice shown when a newer GitHub release is available.
-    pub version_notice: Option<crate::version::UpdateNotice>,
     /// Shared state across sidebar instances, persisted to tmux global variables.
     pub global: GlobalState,
-    /// Deprecated compatibility value for the removed Activity/Git bottom
-    /// panel. Loaded from tmux so old configs do not break startup, but the UI
-    /// no longer renders a bottom panel.
+    /// Deprecated compatibility value for the removed bottom panel. Loaded
+    /// from rmux options so old configs do not break startup, but the UI no
+    /// longer renders a bottom panel.
     pub bottom_panel_height: u16,
     /// Maps session_id → session name, refreshed periodically from
     /// `~/.claude/sessions/*.json` files. The `dirty` flag is `true` when
@@ -123,7 +118,7 @@ pub struct AppState {
     /// updates it every 10s).
     pub sessions: SessionNamesState,
     /// Whether the pet animation is drawn and ticked. Loaded once at startup
-    /// from the `@sidebar_pet` tmux option. Defaults to `false`.
+    /// from the `@sidebar_pet` rmux option. Defaults to `false`.
     pub pet_enabled: bool,
 }
 
@@ -132,7 +127,6 @@ impl AppState {
         let mut state = Self {
             now: 0,
             repo_groups: vec![],
-            git_info_cache: crate::group::PaneGitInfoCache::new(),
             focus_state: FocusState::new(),
             flash: None,
             spinner_frame: 0,
@@ -165,7 +159,6 @@ impl AppState {
             pet_working_paper_lift_until: 0,
             pet_working_paper_x_offset: 0,
             pet_working_paper_seed: 1,
-            version_notice: None,
             global: GlobalState::new(),
             bottom_panel_height: crate::ui::BOTTOM_PANEL_HEIGHT,
             sessions: SessionNamesState::new(),
@@ -180,8 +173,8 @@ impl AppState {
 mod tests {
     use super::*;
     use crate::activity::{TaskProgress, TaskStatus};
-    use crate::group::{PaneGitInfo, RepoGroup};
-    use crate::tmux::{AgentType, PaneInfo, PaneStatus, PermissionMode, WorktreeMetadata};
+    use crate::group::RepoGroup;
+    use crate::tmux::{AgentType, PaneInfo, PaneStatus, PermissionMode};
     use std::fs;
 
     /// Reset filter click debounce so the next `handle_filter_click` is not ignored.
@@ -206,10 +199,8 @@ mod tests {
             permission_mode: PermissionMode::Default,
             subagents: vec![],
             pane_pid: None,
-            worktree: WorktreeMetadata::default(),
             session_id: None,
             session_name: String::new(),
-            sidebar_spawned: false,
             bg_shell_cmd: None,
         }
     }
@@ -227,15 +218,12 @@ mod tests {
             RepoGroup {
                 name: "dotfiles".into(),
                 has_focus: true,
-                panes: vec![
-                    (test_pane("%1"), PaneGitInfo::default()),
-                    (test_pane("%2"), PaneGitInfo::default()),
-                ],
+                panes: vec![test_pane("%1"), test_pane("%2")],
             },
             RepoGroup {
                 name: "app".into(),
                 has_focus: false,
-                panes: vec![(test_pane("%3"), PaneGitInfo::default())],
+                panes: vec![test_pane("%3")],
             },
         ];
         state.rebuild_row_targets();
@@ -253,12 +241,12 @@ mod tests {
             RepoGroup {
                 name: "dotfiles".into(),
                 has_focus: true,
-                panes: vec![(test_pane("%1"), PaneGitInfo::default())],
+                panes: vec![test_pane("%1")],
             },
             RepoGroup {
                 name: "app".into(),
                 has_focus: false,
-                panes: vec![(test_pane("%5"), PaneGitInfo::default())],
+                panes: vec![test_pane("%5")],
             },
         ];
         state.rebuild_row_targets();
@@ -281,7 +269,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "test".into(),
             has_focus: true,
-            panes: vec![(test_pane("%100"), PaneGitInfo::default())],
+            panes: vec![test_pane("%100")],
         }];
 
         let log_path = crate::activity::log_file_path(&pane_id);
@@ -312,7 +300,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "test".into(),
             has_focus: true,
-            panes: vec![(test_pane("%101"), PaneGitInfo::default())],
+            panes: vec![test_pane("%101")],
         }];
 
         // First: 1 task, completed → dismissed
@@ -405,7 +393,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "test".into(),
             has_focus: true,
-            panes: vec![(test_pane(&pane_id), PaneGitInfo::default())],
+            panes: vec![test_pane(&pane_id)],
         }];
         state.set_pane_task_progress(
             &pane_id,
@@ -428,7 +416,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "test".into(),
             has_focus: true,
-            panes: vec![(test_pane(&pane_id), PaneGitInfo::default())],
+            panes: vec![test_pane(&pane_id)],
         }];
         state.set_pane_task_dismissed_total(&pane_id, Some(1));
         let log_path = write_activity_log(
@@ -453,7 +441,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "test".into(),
             has_focus: true,
-            panes: vec![(test_pane(&pane_id), PaneGitInfo::default())],
+            panes: vec![test_pane(&pane_id)],
         }];
         let log_path = write_activity_log(
             &pane_id,
@@ -474,7 +462,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "test".into(),
             has_focus: true,
-            panes: vec![(test_pane(&pane_id), PaneGitInfo::default())],
+            panes: vec![test_pane(&pane_id)],
         }];
         let log_path = write_activity_log(
             &pane_id,
@@ -498,7 +486,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "test".into(),
             has_focus: true,
-            panes: vec![(test_pane(&pane_id), PaneGitInfo::default())],
+            panes: vec![test_pane(&pane_id)],
         }];
         let log_path = write_activity_log(
             &pane_id,
@@ -524,8 +512,6 @@ mod tests {
         let mut state = AppState::new("%99".into());
         let pane_id = "%213";
 
-        state.set_pane_ports(pane_id, vec![3000, 5173]);
-        state.set_pane_command(pane_id, Some("npm run dev".into()));
         state.set_pane_task_progress(
             pane_id,
             Some(TaskProgress {
@@ -535,8 +521,6 @@ mod tests {
         state.set_pane_task_dismissed_total(pane_id, Some(4));
         state.set_pane_inactive_since(pane_id, Some(123));
 
-        assert_eq!(state.pane_ports(pane_id), Some(&[3000, 5173][..]));
-        assert_eq!(state.pane_command(pane_id), Some("npm run dev"));
         assert_eq!(
             state.pane_task_progress(pane_id).map(|p| p.total()),
             Some(1)
@@ -554,17 +538,14 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "test".into(),
             has_focus: true,
-            panes: vec![(test_pane("%1"), PaneGitInfo::default())],
+            panes: vec![test_pane("%1")],
         }];
-        state.set_pane_ports("%1", vec![3000]);
-        state.set_pane_command("%1", Some("npm run dev".into()));
-        state.set_pane_ports("%2", vec![5173]);
+        state.set_pane_task_dismissed_total("%1", Some(1));
         state.set_pane_task_dismissed_total("%2", Some(2));
 
         state.prune_pane_states_to_current_panes();
 
-        assert_eq!(state.pane_ports("%1"), Some(&[3000][..]));
-        assert_eq!(state.pane_command("%1"), Some("npm run dev"));
+        assert_eq!(state.pane_task_dismissed_total("%1"), Some(1));
         assert!(state.pane_state("%2").is_none());
     }
 
@@ -577,7 +558,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "test".into(),
             has_focus: true,
-            panes: vec![(pane, PaneGitInfo::default())],
+            panes: vec![pane],
         }];
         // 5 out of 6 tasks completed — agent is idle so it won't update further
         let log_path = write_activity_log(
@@ -607,7 +588,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "test".into(),
             has_focus: true,
-            panes: vec![(test_pane(&pane_id), PaneGitInfo::default())],
+            panes: vec![test_pane(&pane_id)],
         }];
         let log_path = write_activity_log(
             &pane_id,
@@ -634,7 +615,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "test".into(),
             has_focus: true,
-            panes: vec![(pane, PaneGitInfo::default())],
+            panes: vec![pane],
         }];
         let log_path = write_activity_log(
             &pane_id,
@@ -665,7 +646,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "test".into(),
             has_focus: true,
-            panes: vec![(pane, PaneGitInfo::default())],
+            panes: vec![pane],
         }];
         let log_path = write_activity_log(
             &pane_id,
@@ -684,7 +665,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "test".into(),
             has_focus: true,
-            panes: vec![(pane, PaneGitInfo::default())],
+            panes: vec![pane],
         }];
         state.now = 102;
         state.refresh_task_progress();
@@ -705,7 +686,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "test".into(),
             has_focus: true,
-            panes: vec![(pane, PaneGitInfo::default())],
+            panes: vec![pane],
         }];
         let log_path = write_activity_log(
             &pane_id,
@@ -741,7 +722,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "test".into(),
             has_focus: true,
-            panes: vec![(pane, PaneGitInfo::default())],
+            panes: vec![pane],
         }];
         let log_path = write_activity_log(
             &pane_id,
@@ -951,18 +932,14 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "project".into(),
             has_focus: true,
-            panes: vec![
-                (test_pane("%1"), PaneGitInfo::default()),
-                (test_pane("%2"), PaneGitInfo::default()),
-                (test_pane("%3"), PaneGitInfo::default()),
-            ],
+            panes: vec![test_pane("%1"), test_pane("%2"), test_pane("%3")],
         }];
         state.global.selected_pane_row = 2;
         state.rebuild_row_targets();
         assert_eq!(state.global.selected_pane_row, 2);
 
         // Shrink to 1 pane
-        state.repo_groups[0].panes = vec![(test_pane("%1"), PaneGitInfo::default())];
+        state.repo_groups[0].panes = vec![test_pane("%1")];
         state.rebuild_row_targets();
         assert_eq!(
             state.global.selected_pane_row, 0,
@@ -994,11 +971,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "project".into(),
             has_focus: true,
-            panes: vec![
-                (p1, PaneGitInfo::default()),
-                (p2, PaneGitInfo::default()),
-                (p3, PaneGitInfo::default()),
-            ],
+            panes: vec![p1, p2, p3],
         }];
 
         // All filter: all 3 panes
@@ -1038,11 +1011,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "project".into(),
             has_focus: true,
-            panes: vec![
-                (p1, PaneGitInfo::default()),
-                (p2, PaneGitInfo::default()),
-                (p3, PaneGitInfo::default()),
-            ],
+            panes: vec![p1, p2, p3],
         }];
 
         // Select last agent in All view
@@ -1113,12 +1082,12 @@ mod tests {
             RepoGroup {
                 name: "alpha".into(),
                 has_focus: true,
-                panes: vec![(test_pane("%1"), PaneGitInfo::default())],
+                panes: vec![test_pane("%1")],
             },
             RepoGroup {
                 name: "beta".into(),
                 has_focus: false,
-                panes: vec![(test_pane("%2"), PaneGitInfo::default())],
+                panes: vec![test_pane("%2")],
             },
         ];
         state.layout.repo_button_col = Some(20);
@@ -1140,12 +1109,12 @@ mod tests {
             RepoGroup {
                 name: "alpha".into(),
                 has_focus: true,
-                panes: vec![(test_pane("%1"), PaneGitInfo::default())],
+                panes: vec![test_pane("%1")],
             },
             RepoGroup {
                 name: "beta".into(),
                 has_focus: false,
-                panes: vec![(test_pane("%2"), PaneGitInfo::default())],
+                panes: vec![test_pane("%2")],
             },
         ];
         state.global.repo_filter = RepoFilter::Repo("beta".into());
@@ -1177,12 +1146,12 @@ mod tests {
             RepoGroup {
                 name: "alpha".into(),
                 has_focus: true,
-                panes: vec![(test_pane("%1"), PaneGitInfo::default())],
+                panes: vec![test_pane("%1")],
             },
             RepoGroup {
                 name: "beta".into(),
                 has_focus: false,
-                panes: vec![(test_pane("%2"), PaneGitInfo::default())],
+                panes: vec![test_pane("%2")],
             },
         ];
         state.popup = PopupState::Repo {
@@ -1257,13 +1226,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "project".into(),
             has_focus: true,
-            panes: vec![
-                (p1, PaneGitInfo::default()),
-                (p2, PaneGitInfo::default()),
-                (p3, PaneGitInfo::default()),
-                (p4, PaneGitInfo::default()),
-                (p5, PaneGitInfo::default()),
-            ],
+            panes: vec![p1, p2, p3, p4, p5],
         }];
         // (all, running, background, waiting, idle, error)
         assert_eq!(state.status_counts(), (5, 1, 1, 1, 1, 1));
@@ -1357,7 +1320,7 @@ mod tests {
             .map(|i| {
                 let mut p = test_pane(&format!("%{i}"));
                 p.status = PaneStatus::Running;
-                (p, PaneGitInfo::default())
+                p
             })
             .collect();
         state.repo_groups = vec![RepoGroup {
@@ -1398,11 +1361,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "project".into(),
             has_focus: true,
-            panes: vec![
-                (p1, PaneGitInfo::default()),
-                (p2, PaneGitInfo::default()),
-                (p3, PaneGitInfo::default()),
-            ],
+            panes: vec![p1, p2, p3],
         }];
         state.global.status_filter = StatusFilter::All;
         state.rebuild_row_targets();
@@ -1435,12 +1394,12 @@ mod tests {
             RepoGroup {
                 name: "dotfiles".into(),
                 has_focus: true,
-                panes: vec![(test_pane("%1"), PaneGitInfo::default())],
+                panes: vec![test_pane("%1")],
             },
             RepoGroup {
                 name: "app".into(),
                 has_focus: false,
-                panes: vec![(test_pane("%2"), PaneGitInfo::default())],
+                panes: vec![test_pane("%2")],
             },
         ];
         state.global.repo_filter = RepoFilter::All;
@@ -1456,12 +1415,12 @@ mod tests {
             RepoGroup {
                 name: "dotfiles".into(),
                 has_focus: true,
-                panes: vec![(test_pane("%1"), PaneGitInfo::default())],
+                panes: vec![test_pane("%1")],
             },
             RepoGroup {
                 name: "app".into(),
                 has_focus: false,
-                panes: vec![(test_pane("%2"), PaneGitInfo::default())],
+                panes: vec![test_pane("%2")],
             },
         ];
         state.global.repo_filter = RepoFilter::Repo("app".into());
@@ -1481,14 +1440,14 @@ mod tests {
                 name: "app".into(),
                 has_focus: true,
                 panes: vec![
-                    (test_pane("%1"), PaneGitInfo::default()), // Running
-                    (idle_pane, PaneGitInfo::default()),       // Idle
+                    test_pane("%1"), // Running
+                    idle_pane,       // Idle
                 ],
             },
             RepoGroup {
                 name: "lib".into(),
                 has_focus: false,
-                panes: vec![(test_pane("%2"), PaneGitInfo::default())], // Running
+                panes: vec![test_pane("%2")], // Running
             },
         ];
         state.global.repo_filter = RepoFilter::Repo("app".into());
@@ -1506,7 +1465,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "app".into(),
             has_focus: true,
-            panes: vec![(test_pane("%1"), PaneGitInfo::default())],
+            panes: vec![test_pane("%1")],
         }];
         state.global.repo_filter = RepoFilter::Repo("deleted-repo".into());
         state.rebuild_row_targets();
@@ -1542,12 +1501,12 @@ mod tests {
             RepoGroup {
                 name: "app".into(),
                 has_focus: true,
-                panes: vec![(test_pane("%1"), PaneGitInfo::default())], // Running
+                panes: vec![test_pane("%1")], // Running
             },
             RepoGroup {
                 name: "lib".into(),
                 has_focus: false,
-                panes: vec![(idle_pane, PaneGitInfo::default())], // Idle
+                panes: vec![idle_pane], // Idle
             },
         ];
 

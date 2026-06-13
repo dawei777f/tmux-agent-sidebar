@@ -23,7 +23,6 @@ pub(super) fn missing_hooks_has_copy_button(agent: &str) -> bool {
 /// Whether the secondary header should show the notices indicator.
 pub(in crate::ui) fn has_info(state: &AppState) -> bool {
     debug_forced_display()
-        || state.version_notice.is_some()
         || state.notices.claude_plugin_notice.is_some()
         || !state.notices.missing_hook_groups.is_empty()
 }
@@ -39,12 +38,8 @@ mod tests {
     use super::*;
     use crate::state::NoticesMissingHookGroup;
 
-    fn state_with(version: Option<(&str, &str)>, groups: Vec<(&str, Vec<&str>)>) -> AppState {
+    fn state_with(groups: Vec<(&str, Vec<&str>)>) -> AppState {
         let mut state = AppState::new(String::new());
-        state.version_notice = version.map(|(local, latest)| crate::version::UpdateNotice {
-            local_version: local.into(),
-            latest_version: latest.into(),
-        });
         state.notices.missing_hook_groups = groups
             .into_iter()
             .map(|(agent, hooks)| NoticesMissingHookGroup {
@@ -69,32 +64,26 @@ mod tests {
     // ─── has_info branches ───────────────────────────────────────────
 
     #[test]
-    fn has_info_false_when_no_version_and_no_hooks() {
-        let state = state_with(None, vec![]);
+    fn has_info_false_when_no_notices() {
+        let state = state_with(vec![]);
         assert!(!has_info(&state));
     }
 
     #[test]
-    fn has_info_true_when_only_version_notice() {
-        let state = state_with(Some(("0.2.6", "0.2.7")), vec![]);
-        assert!(has_info(&state));
-    }
-
-    #[test]
     fn has_info_true_when_only_missing_hooks() {
-        let state = state_with(None, vec![("claude", vec!["Stop"])]);
+        let state = state_with(vec![("claude", vec!["Stop"])]);
         assert!(has_info(&state));
     }
 
     #[test]
-    fn has_info_true_when_both_version_and_hooks() {
-        let state = state_with(Some(("0.2.6", "0.2.7")), vec![("claude", vec!["Stop"])]);
+    fn has_info_true_when_multiple_hook_groups() {
+        let state = state_with(vec![("claude", vec!["Stop"]), ("codex", vec!["Stop"])]);
         assert!(has_info(&state));
     }
 
     #[test]
     fn has_info_true_when_only_plugin_notice() {
-        let mut state = state_with(None, vec![]);
+        let mut state = state_with(vec![]);
         state.notices.claude_plugin_notice =
             Some(crate::state::ClaudePluginNotice::InstallRecommended);
         assert!(has_info(&state));

@@ -20,24 +20,12 @@ pub struct PaneInfo {
     pub permission_mode: PermissionMode,
     pub subagents: Vec<String>,
     pub pane_pid: Option<u32>,
-    pub worktree: WorktreeMetadata,
     pub session_id: Option<String>,
     pub session_name: String,
-    /// `true` when the window this pane lives in was created by the
-    /// sidebar's spawn flow (via the `@agent-sidebar-spawned` window
-    /// option). Used by the row renderer to show a clickable red `×`
-    /// in place of the usual `+` worktree marker.
-    pub sidebar_spawned: bool,
     /// Most recent backgrounded Bash command, if any. Populated while the
     /// pane status is `Background` (or `Running` with a backgrounded shell
     /// still alive) so the row body can surface the actual command.
     pub bg_shell_cmd: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct WorktreeMetadata {
-    pub name: String,
-    pub branch: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

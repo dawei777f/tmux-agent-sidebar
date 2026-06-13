@@ -1,48 +1,25 @@
-use std::process::Command;
+use std::path::PathBuf;
+use std::sync::OnceLock;
+use std::time::Duration;
 
-pub fn run_tmux(args: &[&str]) -> Option<String> {
-    #[cfg(test)]
-    if let Some(output) = test_mock::intercept_run_tmux(args) {
-        return output;
-    }
-
-    let output = Command::new("tmux").args(args).output().ok()?;
-    if output.status.success() {
-        Some(String::from_utf8_lossy(&output.stdout).to_string())
-    } else {
-        None
-    }
-}
-
-/// Run a tmux command, returning trimmed stdout on success and stderr on failure.
-/// Used by the spawn/remove flow so the UI can surface a meaningful error message
-/// instead of a silent fallthrough.
-pub fn run_tmux_capture(args: &[&str]) -> Result<String, String> {
-    #[cfg(test)]
-    if let Some(result) = test_mock::intercept_run_tmux_capture(args) {
-        return result;
-    }
-
-    let output = Command::new("tmux")
-        .args(args)
-        .output()
-        .map_err(|e| format!("failed to spawn tmux: {e}"))?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Err(if stderr.is_empty() {
-            format!("tmux exited with status {}", output.status)
-        } else {
-            stderr
-        })
-    }
-}
+use rmux_client::{ClientError, Connection, connect, resolve_socket_path};
+use rmux_proto::{
+    BindKeyRequest, CAPABILITY_SDK_PANE_BROADCAST, CapturePaneRequest, CommandOutput,
+    HookLifecycle, HookName, OptionScopeSelector, PaneId, PaneTarget, ResolveTargetType, Response,
+    ScopeSelector, SessionName, SetOptionMode, SplitDirection, SplitWindowTarget, Target,
+    WindowTarget,
+};
 
 pub fn display_message(target: &str, format: &str) -> String {
-    run_tmux(&["display-message", "-t", target, "-p", format])
+    display_message_result(target, format)
         .map(|s| s.trim().to_string())
         .unwrap_or_default()
+}
+
+pub fn display_message_result(target: &str, format: &str) -> Result<String, String> {
+    let mut conn = rmux_connection()?;
+    let target = resolve_any_target(&mut conn, target)?;
+    display_message_for_target(&mut conn, target, format)
 }
 
 /// Resolve the tmux session id containing `pane_id` (e.g. `$3`).
@@ -57,221 +34,635 @@ pub fn pane_session_name(pane_id: &str) -> Option<String> {
     Some(display_message(pane_id, "#{session_name}")).filter(|s| !s.is_empty())
 }
 
-/// Create a new tmux window in `session` whose initial cwd is `cwd` and whose
-/// title is `name`. Returns `(pane_id, window_id)` on success — the window id
-/// is used by the spawn flow to set markers at window scope so split panes
-/// (e.g. Claude Code subagents) inherit them.
-pub fn new_window(session: &str, cwd: &str, name: &str) -> Result<(String, String), String> {
-    let out = run_tmux_capture(&[
-        "new-window",
-        "-t",
-        session,
-        "-c",
-        cwd,
-        "-n",
-        name,
-        "-P",
-        "-F",
-        "#{pane_id} #{window_id}",
-    ])?;
-    let mut parts = out.split_whitespace();
-    let pane = parts
-        .next()
-        .ok_or_else(|| "new-window returned no pane id".to_string())?
-        .to_string();
-    let window = parts
-        .next()
-        .ok_or_else(|| "new-window returned no window id".to_string())?
-        .to_string();
-    Ok((pane, window))
+pub fn list_panes_formatted(
+    target: Option<&str>,
+    all_sessions: bool,
+    format: &str,
+) -> Result<String, String> {
+    let mut conn = rmux_connection()?;
+    let format = Some(format.to_string());
+    if all_sessions {
+        return list_panes_all_sessions(&mut conn, format);
+    }
+    match target {
+        Some(target) => {
+            let (session, window) = session_window_for_list_target(&mut conn, target)?;
+            let response = conn
+                .list_panes_in_window(session, window, format)
+                .map_err(rmux_client_error)?;
+            stdout_from_response(response)
+        }
+        None => {
+            let session = active_session(&mut conn)?;
+            let response = conn
+                .list_panes_in_window(session, None, format)
+                .map_err(rmux_client_error)?;
+            stdout_from_response(response)
+        }
+    }
 }
 
-/// Set a user option at window scope. Needed so markers survive through
-/// split panes that inherit from the window. Returns an error so the
-/// spawn flow can roll back when a marker the remove path relies on
-/// cannot be written — silently dropping the failure would leave an
-/// un-removable pane.
-pub fn set_window_option(window: &str, key: &str, value: &str) -> Result<(), String> {
-    run_tmux_capture(&["set", "-w", "-t", window, key, value]).map(|_| ())
+pub fn split_window_vertical(
+    target: &str,
+    before: bool,
+    size: &str,
+    start_directory: &str,
+    command: &str,
+    output_format: &str,
+) -> Result<String, String> {
+    let mut conn = rmux_connection()?;
+    let target = match resolve_target(&mut conn, target, ResolveTargetType::Pane)? {
+        Target::Session(session) => SplitWindowTarget::Session(session),
+        Target::Window(window) => SplitWindowTarget::Session(window.session_name().clone()),
+        Target::Pane(pane) => SplitWindowTarget::Pane(pane),
+    };
+    let response = conn
+        .roundtrip(&rmux_proto::Request::SplitWindowExt(
+            rmux_proto::SplitWindowExtRequest {
+                target,
+                direction: SplitDirection::Vertical,
+                before,
+                environment: None,
+                command: Some(vec![command.to_string()]),
+                process_command: None,
+                start_directory: Some(PathBuf::from(start_directory)),
+                keep_alive_on_exit: None,
+                detached: false,
+                size: Some(size.to_string()),
+                preserve_zoom: false,
+            },
+        ))
+        .map_err(rmux_client_error)?;
+    match response {
+        Response::SplitWindow(response) => {
+            display_message_for_target(&mut conn, Target::Pane(response.pane), output_format)
+        }
+        Response::Error(error) => Err(error.error.to_string()),
+        other => Err(format!(
+            "rmux returned {} for split-window",
+            other.command_name()
+        )),
+    }
 }
 
 /// Send a command line to `target` (a pane id) and press Enter so the shell
-/// executes it. Used to launch the agent binary right after window creation.
-/// The text is sent with `-l` (literal) so nothing in `command` can collide
-/// with tmux key names (e.g. `Tab`, `BSpace`); Enter is issued as a
-/// separate invocation so it's interpreted as the Return key.
+/// executes it. Input goes through rmux SDK pane broadcast so we do not shell
+/// out to tmux/rmux.
 pub fn send_command(target: &str, command: &str) -> Result<(), String> {
-    run_tmux_capture(&["send-keys", "-t", target, "-l", command])?;
-    run_tmux_capture(&["send-keys", "-t", target, "Enter"]).map(|_| ())
+    send_command_with_broadcast(target, command)
 }
 
 /// Kill the tmux window identified by `window_id` (e.g. `@7`).
 pub fn kill_window(window_id: &str) -> Result<(), String> {
-    run_tmux_capture(&["kill-window", "-t", window_id]).map(|_| ())
+    let mut conn = rmux_connection()?;
+    let window = resolve_window(&mut conn, window_id)?;
+    let response = conn.kill_window(window, false).map_err(rmux_client_error)?;
+    stdout_from_response(response).map(|_| ())
+}
+
+pub fn kill_pane(pane_id: &str) -> Result<(), String> {
+    let mut conn = rmux_connection()?;
+    let pane = resolve_pane(&mut conn, pane_id)?;
+    let response = conn.kill_pane(pane).map_err(rmux_client_error)?;
+    stdout_from_response(response).map(|_| ())
 }
 
 /// Kill the tmux session identified by `session_id` (preferably `$N`).
 pub fn kill_session(session_id: &str) -> Result<(), String> {
-    run_tmux_capture(&["kill-session", "-t", session_id]).map(|_| ())
+    let mut conn = rmux_connection()?;
+    let session = resolve_session(&mut conn, session_id)?;
+    let response = conn
+        .kill_session(rmux_proto::KillSessionRequest {
+            target: session,
+            kill_all_except_target: false,
+            clear_alerts: false,
+        })
+        .map_err(rmux_client_error)?;
+    stdout_from_response(response).map(|_| ())
 }
 
 pub fn select_pane(pane_id: &str) {
-    // Find the session containing this pane and switch to it first
+    // Find the session containing this pane and switch to it first.
     let session_id = display_message(pane_id, "#{session_id}");
     if !session_id.is_empty() {
-        let _ = run_tmux(&["switch-client", "-t", &session_id]);
+        let _ = switch_client(&session_id);
     }
-    // Then switch to the correct window
+    // Then switch to the correct window.
     let window_id = display_message(pane_id, "#{window_id}");
     if !window_id.is_empty() {
-        let _ = run_tmux(&["select-window", "-t", &window_id]);
+        let _ = select_window(&window_id);
     }
-    let _ = run_tmux(&["select-pane", "-t", pane_id]);
+    let _ = select_pane_by_id(pane_id);
 }
 
-#[cfg(test)]
-pub mod test_mock {
-    use std::cell::RefCell;
+pub fn select_pane_by_id(pane_id: &str) -> Result<(), String> {
+    let mut conn = rmux_connection()?;
+    let pane = resolve_pane(&mut conn, pane_id)?;
+    let response = conn.select_pane(pane).map_err(rmux_client_error)?;
+    stdout_from_response(response).map(|_| ())
+}
 
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub struct TmuxCommand {
-        pub args: Vec<String>,
+pub fn select_last_pane(window_id: &str) -> Result<(), String> {
+    let mut conn = rmux_connection()?;
+    let window = resolve_window(&mut conn, window_id)?;
+    let response = conn.last_pane(window).map_err(rmux_client_error)?;
+    stdout_from_response(response).map(|_| ())
+}
+
+pub fn select_window(window_id: &str) -> Result<(), String> {
+    let mut conn = rmux_connection()?;
+    let window = resolve_window(&mut conn, window_id)?;
+    let response = conn.select_window(window).map_err(rmux_client_error)?;
+    stdout_from_response(response).map(|_| ())
+}
+
+pub fn switch_client(session_id: &str) -> Result<(), String> {
+    let mut conn = rmux_connection()?;
+    let session = resolve_session(&mut conn, session_id)?;
+    let response = conn.switch_client(session).map_err(rmux_client_error)?;
+    stdout_from_response(response).map(|_| ())
+}
+
+pub fn set_global_option(key: &str, value: &str) -> Result<(), String> {
+    let mut conn = rmux_connection()?;
+    set_option_by_name(
+        &mut conn,
+        global_scope_for_option_name(key),
+        key,
+        Some(value),
+        false,
+        false,
+    )
+}
+
+pub fn get_global_option(key: &str) -> Result<Option<String>, String> {
+    let mut conn = rmux_connection()?;
+    let response = conn
+        .show_options(
+            global_scope_for_option_name(key),
+            Some(key.to_string()),
+            true,
+            false,
+        )
+        .map_err(rmux_client_error)?;
+    match stdout_from_response(response) {
+        Ok(output) => Ok(Some(output.trim().to_string()).filter(|s| !s.is_empty())),
+        Err(err) if err.starts_with("invalid option:") => Ok(None),
+        Err(err) => Err(err),
     }
+}
 
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    enum Response {
-        Success(String),
-        Failure(String),
+pub fn get_all_global_options_formatted() -> Result<String, String> {
+    let mut conn = rmux_connection()?;
+    let response = conn
+        .show_options(OptionScopeSelector::SessionGlobal, None, false, false)
+        .map_err(rmux_client_error)?;
+    stdout_from_response(response)
+}
+
+pub fn unset_global_option(key: &str) -> Result<(), String> {
+    let mut conn = rmux_connection()?;
+    set_option_by_name(
+        &mut conn,
+        global_scope_for_option_name(key),
+        key,
+        None,
+        false,
+        true,
+    )
+}
+
+pub fn set_pane_option_by_id(pane: &str, key: &str, value: &str) -> Result<(), String> {
+    let mut conn = rmux_connection()?;
+    let pane = resolve_pane(&mut conn, pane)?;
+    set_option_by_name(
+        &mut conn,
+        OptionScopeSelector::Pane(pane),
+        key,
+        Some(value),
+        false,
+        false,
+    )
+}
+
+pub fn get_pane_option_by_id(pane: &str, key: &str) -> Result<String, String> {
+    let mut conn = rmux_connection()?;
+    let pane = resolve_pane(&mut conn, pane)?;
+    let response = conn
+        .show_options(
+            OptionScopeSelector::Pane(pane),
+            Some(key.to_string()),
+            true,
+            false,
+        )
+        .map_err(rmux_client_error)?;
+    Ok(stdout_from_response(response)?.trim().to_string())
+}
+
+pub fn unset_pane_option_by_id(pane: &str, key: &str) -> Result<(), String> {
+    let mut conn = rmux_connection()?;
+    let pane = resolve_pane(&mut conn, pane)?;
+    set_option_by_name(
+        &mut conn,
+        OptionScopeSelector::Pane(pane),
+        key,
+        None,
+        false,
+        true,
+    )
+}
+
+pub fn set_global_option_if_empty(key: &str, value: &str) -> Result<(), String> {
+    let mut conn = rmux_connection()?;
+    set_option_by_name(
+        &mut conn,
+        global_scope_for_option_name(key),
+        key,
+        Some(value),
+        true,
+        false,
+    )
+}
+
+pub fn bind_prefix_key(key: &str, command: Vec<String>) -> Result<(), String> {
+    let mut conn = rmux_connection()?;
+    let response = conn
+        .bind_key(BindKeyRequest {
+            table_name: "prefix".to_string(),
+            key: key.to_string(),
+            note: None,
+            repeat: false,
+            command: Some(command),
+        })
+        .map_err(rmux_client_error)?;
+    stdout_from_response(response).map(|_| ())
+}
+
+pub fn replace_global_hook_matching(
+    hook: HookName,
+    needle: &str,
+    command: Option<String>,
+) -> Result<(), String> {
+    let mut conn = rmux_connection()?;
+    let response = conn
+        .show_hooks(ScopeSelector::Global, false, false, Some(hook))
+        .map_err(rmux_client_error)?;
+    let output = stdout_from_response(response).unwrap_or_default();
+    let mut indices = matching_hook_indices(&output, hook, needle);
+    indices.sort_unstable_by(|a, b| b.cmp(a));
+    for index in indices {
+        let response = conn
+            .set_hook_mutation(
+                ScopeSelector::Global,
+                hook,
+                None,
+                HookLifecycle::Persistent,
+                false,
+                true,
+                false,
+                Some(index),
+            )
+            .map_err(rmux_client_error)?;
+        stdout_from_response(response)?;
     }
-
-    #[derive(Debug, Default)]
-    struct MockState {
-        commands: Vec<TmuxCommand>,
-        responses: Vec<(Vec<String>, Response)>,
+    if let Some(command) = command {
+        let response = conn
+            .set_hook_mutation(
+                ScopeSelector::Global,
+                hook,
+                Some(command),
+                HookLifecycle::Persistent,
+                true,
+                false,
+                false,
+                None,
+            )
+            .map_err(rmux_client_error)?;
+        stdout_from_response(response)?;
     }
+    Ok(())
+}
 
-    thread_local! {
-        static MOCK: RefCell<Option<MockState>> = const { RefCell::new(None) };
+pub fn set_buffer(content: &str) -> Result<(), String> {
+    let mut conn = rmux_connection()?;
+    let response = conn
+        .set_buffer(None, content.as_bytes().to_vec(), false, None, false)
+        .map_err(rmux_client_error)?;
+    stdout_from_response(response).map(|_| ())
+}
+
+pub fn capture_pane_ansi(pane_id: &str) -> Result<Vec<u8>, String> {
+    let mut conn = rmux_connection()?;
+    let target = resolve_pane(&mut conn, pane_id)?;
+    let response = conn
+        .capture_pane(CapturePaneRequest {
+            target,
+            start: None,
+            end: None,
+            print: true,
+            buffer_name: None,
+            alternate: false,
+            escape_ansi: true,
+            escape_sequences: false,
+            join_wrapped: false,
+            use_mode_screen: false,
+            preserve_trailing_spaces: false,
+            do_not_trim_spaces: false,
+            pending_input: false,
+            quiet: false,
+            start_is_absolute: false,
+            end_is_absolute: false,
+        })
+        .map_err(rmux_client_error)?;
+    match response {
+        Response::CapturePane(response) => Ok(response
+            .command_output()
+            .map(|output| output.stdout().to_vec())
+            .unwrap_or_default()),
+        Response::Error(error) => Err(error.error.to_string()),
+        other => Err(format!(
+            "rmux returned {} for capture-pane",
+            other.command_name()
+        )),
     }
+}
 
-    pub fn install() -> MockGuard {
-        MOCK.with(|m| *m.borrow_mut() = Some(MockState::default()));
-        MockGuard
+fn rmux_connection() -> Result<Connection, String> {
+    let socket_path = resolve_socket_path(None, None).map_err(rmux_client_error)?;
+    connect(&socket_path).map_err(rmux_client_error)
+}
+
+fn list_panes_all_sessions(
+    conn: &mut Connection,
+    format: Option<String>,
+) -> Result<String, String> {
+    let mut output = String::new();
+    let sessions = conn
+        .list_sessions(rmux_proto::ListSessionsRequest {
+            format: Some("#{session_name}".into()),
+            filter: None,
+            sort_order: Some("name".into()),
+            reversed: false,
+        })
+        .map_err(rmux_client_error)?;
+    let sessions = stdout_from_response(sessions)?;
+    for session in sessions.lines() {
+        let Some(session) = session_name(session) else {
+            continue;
+        };
+        let response = conn
+            .list_panes(session, format.clone())
+            .map_err(rmux_client_error)?;
+        output.push_str(&stdout_from_response(response)?);
     }
+    Ok(output)
+}
 
-    pub struct MockGuard;
+fn session_window_for_list_target(
+    conn: &mut Connection,
+    raw: &str,
+) -> Result<(SessionName, Option<u32>), String> {
+    let target = resolve_target(conn, raw, ResolveTargetType::Window)?;
+    Ok(match target {
+        Target::Session(session) => (session, None),
+        Target::Window(window) => (window.session_name().clone(), Some(window.window_index())),
+        Target::Pane(pane) => (pane.session_name().clone(), Some(pane.window_index())),
+    })
+}
 
-    impl Drop for MockGuard {
-        fn drop(&mut self) {
-            MOCK.with(|m| *m.borrow_mut() = None);
+fn send_command_with_broadcast(target: &str, command: &str) -> Result<(), String> {
+    let mut conn = rmux_connection()?;
+    let pane = resolve_pane(&mut conn, target)?;
+    let session = pane.session_name().clone();
+    let pane_id = pane_id_for_target(&mut conn, &pane)?;
+    if !conn
+        .supports_capability(CAPABILITY_SDK_PANE_BROADCAST)
+        .map_err(rmux_client_error)?
+    {
+        return Err("rmux server does not support pane broadcast".into());
+    }
+    let runtime = tokio_runtime()?;
+    runtime.block_on(async move {
+        let rmux = rmux_sdk::Rmux::builder()
+            .default_timeout(Duration::from_secs(5))
+            .connect()
+            .await
+            .map_err(|err| err.to_string())?;
+        let pane_id = PaneId::new(pane_id);
+        let pane = rmux
+            .pane_by_id(session, pane_id)
+            .await
+            .map_err(|err| err.to_string())?;
+        rmux.broadcast(std::slice::from_ref(&pane), rmux_sdk::Input::Text(command))
+            .await
+            .map_err(|err| err.to_string())?;
+        rmux.broadcast(std::slice::from_ref(&pane), rmux_sdk::Input::Key("Enter"))
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok::<(), String>(())
+    })
+}
+
+fn resolve_target(
+    conn: &mut Connection,
+    target: &str,
+    target_type: ResolveTargetType,
+) -> Result<Target, String> {
+    let response = conn
+        .resolve_target(
+            (!target.is_empty()).then(|| target.to_string()),
+            target_type,
+            false,
+            false,
+        )
+        .map_err(rmux_client_error)?;
+    match response {
+        Response::ResolveTarget(response) => Ok(response.target),
+        Response::Error(error) => Err(error.error.to_string()),
+        other => Err(format!(
+            "rmux returned {} for resolve-target",
+            other.command_name()
+        )),
+    }
+}
+
+fn resolve_any_target(conn: &mut Connection, target: &str) -> Result<Target, String> {
+    let mut last_error = None;
+    for target_type in [
+        ResolveTargetType::Pane,
+        ResolveTargetType::Window,
+        ResolveTargetType::Session,
+    ] {
+        match resolve_target(conn, target, target_type) {
+            Ok(target) => return Ok(target),
+            Err(err) => last_error = Some(err),
         }
     }
+    Err(last_error.unwrap_or_else(|| format!("could not resolve target {target}")))
+}
 
-    pub fn add_success(args: &[&str], stdout: &str) {
-        add_response(args, Response::Success(stdout.to_string()));
-    }
-
-    pub fn add_failure(args: &[&str], stderr: &str) {
-        add_response(args, Response::Failure(stderr.to_string()));
-    }
-
-    fn add_response(args: &[&str], response: Response) {
-        MOCK.with(|m| {
-            if let Some(state) = m.borrow_mut().as_mut() {
-                state.responses.push((
-                    args.iter().map(|arg| (*arg).to_string()).collect(),
-                    response,
-                ));
-            }
-        });
-    }
-
-    pub fn commands() -> Vec<TmuxCommand> {
-        MOCK.with(|m| {
-            m.borrow()
-                .as_ref()
-                .map(|state| state.commands.clone())
-                .unwrap_or_default()
-        })
-    }
-
-    pub(super) fn intercept_run_tmux(args: &[&str]) -> Option<Option<String>> {
-        let args: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
-        MOCK.with(|m| {
-            let mut mock = m.borrow_mut();
-            let state = mock.as_mut()?;
-            state.commands.push(TmuxCommand { args: args.clone() });
-            Some(match take_response(state, &args) {
-                Some(Response::Success(stdout)) => Some(stdout),
-                Some(Response::Failure(_)) => None,
-                None => None,
-            })
-        })
-    }
-
-    pub(super) fn intercept_run_tmux_capture(args: &[&str]) -> Option<Result<String, String>> {
-        let args: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
-        MOCK.with(|m| {
-            let mut mock = m.borrow_mut();
-            let state = mock.as_mut()?;
-            state.commands.push(TmuxCommand { args: args.clone() });
-            Some(match take_response(state, &args) {
-                Some(Response::Success(stdout)) => Ok(stdout.trim().to_string()),
-                Some(Response::Failure(stderr)) => Err(stderr),
-                None => Err("tmux mock has no response for command".into()),
-            })
-        })
-    }
-
-    fn take_response(state: &mut MockState, args: &[String]) -> Option<Response> {
-        let idx = state
-            .responses
-            .iter()
-            .position(|(candidate, _)| candidate == args)?;
-        Some(state.responses.remove(idx).1)
+fn resolve_session(conn: &mut Connection, target: &str) -> Result<SessionName, String> {
+    match resolve_target(conn, target, ResolveTargetType::Session)? {
+        Target::Session(session) => Ok(session),
+        Target::Window(window) => Ok(window.session_name().clone()),
+        Target::Pane(pane) => Ok(pane.session_name().clone()),
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn command_mock_intercepts_display_message() {
-        let _guard = test_mock::install();
-        test_mock::add_success(
-            &["display-message", "-t", "%1", "-p", "#{session_id}"],
-            "$2\n",
-        );
-
-        assert_eq!(pane_tmux_session_id("%1").as_deref(), Some("$2"));
-
-        assert_eq!(
-            test_mock::commands(),
-            vec![test_mock::TmuxCommand {
-                args: vec![
-                    "display-message".into(),
-                    "-t".into(),
-                    "%1".into(),
-                    "-p".into(),
-                    "#{session_id}".into(),
-                ],
-            }]
-        );
+fn resolve_window(conn: &mut Connection, target: &str) -> Result<WindowTarget, String> {
+    match resolve_target(conn, target, ResolveTargetType::Window)? {
+        Target::Window(window) => Ok(window),
+        Target::Pane(pane) => Ok(WindowTarget::with_window(
+            pane.session_name().clone(),
+            pane.window_index(),
+        )),
+        Target::Session(session) => Ok(WindowTarget::new(session)),
     }
+}
 
-    #[test]
-    fn kill_session_uses_kill_session_target() {
-        let _guard = test_mock::install();
-        test_mock::add_success(&["kill-session", "-t", "$7"], "");
-
-        kill_session("$7").expect("kill session should succeed");
-
-        assert_eq!(
-            test_mock::commands(),
-            vec![test_mock::TmuxCommand {
-                args: vec!["kill-session".into(), "-t".into(), "$7".into()],
-            }]
-        );
+fn resolve_pane(conn: &mut Connection, target: &str) -> Result<PaneTarget, String> {
+    match resolve_target(conn, target, ResolveTargetType::Pane)? {
+        Target::Pane(pane) => Ok(pane),
+        Target::Window(window) => Ok(PaneTarget::with_window(
+            window.session_name().clone(),
+            window.window_index(),
+            0,
+        )),
+        Target::Session(session) => Ok(PaneTarget::new(session, 0)),
     }
+}
+
+fn active_session(conn: &mut Connection) -> Result<SessionName, String> {
+    let response = conn
+        .display_message(None, true, Some("#{session_name}".to_string()))
+        .map_err(rmux_client_error)?;
+    let name = stdout_from_response(response)?;
+    session_name(name.trim()).ok_or_else(|| "no active session".into())
+}
+
+fn global_scope_for_option_name(name: &str) -> OptionScopeSelector {
+    if is_user_option(name) {
+        OptionScopeSelector::SessionGlobal
+    } else {
+        OptionScopeSelector::ServerGlobal
+    }
+}
+
+fn is_user_option(name: &str) -> bool {
+    name.split('[')
+        .next()
+        .is_some_and(|base| base.starts_with('@'))
+}
+
+fn session_name(raw: &str) -> Option<SessionName> {
+    SessionName::new(raw).ok()
+}
+
+fn pane_id_for_target(conn: &mut Connection, target: &PaneTarget) -> Result<u32, String> {
+    let format = "#{pane_id}";
+    let response = conn
+        .list_panes_in_window(
+            target.session_name().clone(),
+            Some(target.window_index()),
+            Some(format.into()),
+        )
+        .map_err(rmux_client_error)?;
+    let output = stdout_from_response(response)?;
+    output
+        .lines()
+        .nth(target.pane_index() as usize)
+        .and_then(|pane_id| pane_id.strip_prefix('%'))
+        .and_then(|pane_id| pane_id.parse::<u32>().ok())
+        .ok_or_else(|| format!("could not resolve pane id for {target}"))
+}
+
+fn stdout_from_response(response: Response) -> Result<String, String> {
+    match response {
+        Response::Error(error) => Err(error.error.to_string()),
+        response => Ok(command_output_to_string(response.command_output())),
+    }
+}
+
+fn display_message_for_target(
+    conn: &mut Connection,
+    target: Target,
+    format: &str,
+) -> Result<String, String> {
+    let response = conn
+        .display_message(Some(target), true, Some(format.to_string()))
+        .map_err(rmux_client_error)?;
+    stdout_from_response(response)
+}
+
+fn command_output_to_string(output: Option<&CommandOutput>) -> String {
+    output
+        .map(|output| String::from_utf8_lossy(output.stdout()).to_string())
+        .unwrap_or_default()
+}
+
+fn matching_hook_indices(output: &str, hook: HookName, needle: &str) -> Vec<u32> {
+    let hook = hook.as_str();
+    output
+        .lines()
+        .filter(|line| line.contains(needle))
+        .filter_map(|line| {
+            let start = line.find(hook)? + hook.len();
+            let rest = line.get(start..)?;
+            let bracket_start = rest.find('[')? + 1;
+            let bracket_end = rest.get(bracket_start..)?.find(']')? + bracket_start;
+            rest.get(bracket_start..bracket_end)?.parse().ok()
+        })
+        .collect()
+}
+
+fn set_option_by_name(
+    conn: &mut Connection,
+    scope: OptionScopeSelector,
+    name: &str,
+    value: Option<&str>,
+    only_if_unset: bool,
+    unset: bool,
+) -> Result<(), String> {
+    set_option_by_name_with_mode(
+        conn,
+        scope,
+        name.to_string(),
+        value.map(str::to_string),
+        SetOptionMode::Replace,
+        only_if_unset,
+        unset,
+    )
+    .map(|_| ())
+}
+
+fn set_option_by_name_with_mode(
+    conn: &mut Connection,
+    scope: OptionScopeSelector,
+    name: String,
+    value: Option<String>,
+    mode: SetOptionMode,
+    only_if_unset: bool,
+    unset: bool,
+) -> Result<String, String> {
+    let response = conn
+        .set_option_by_name(scope, name, value, mode, only_if_unset, unset, false)
+        .map_err(rmux_client_error)?;
+    stdout_from_response(response)
+}
+
+fn tokio_runtime() -> Result<&'static tokio::runtime::Runtime, String> {
+    static RUNTIME: OnceLock<Result<tokio::runtime::Runtime, String>> = OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|err| err.to_string())
+        })
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
+fn rmux_client_error(error: ClientError) -> String {
+    error.to_string()
 }

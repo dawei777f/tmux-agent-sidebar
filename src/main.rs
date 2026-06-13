@@ -44,9 +44,9 @@ fn main() -> io::Result<()> {
         std::process::exit(code);
     }
 
-    let tmux_pane = std::env::var("TMUX_PANE").unwrap_or_default();
+    let tmux_pane = std::env::var("RMUX_PANE").unwrap_or_default();
     if tmux_pane.is_empty() {
-        eprintln!("TMUX_PANE not set");
+        eprintln!("RMUX_PANE not set");
         std::process::exit(1);
     }
 
@@ -58,16 +58,7 @@ fn main() -> io::Result<()> {
     }
 
     let pid = std::process::id();
-    let _ = std::process::Command::new("tmux")
-        .args([
-            "set",
-            "-t",
-            &tmux_pane,
-            "-p",
-            tmux::SIDEBAR_PID,
-            &pid.to_string(),
-        ])
-        .output();
+    tmux::set_pane_option(&tmux_pane, tmux::SIDEBAR_PID, &pid.to_string());
 
     let mut stdout = io::stdout();
     let _tui_session = TuiSession::enter(&mut stdout)?;

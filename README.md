@@ -1,6 +1,6 @@
 <h1 align="center">tmux-agent-sidebar</h1>
 
-<p align="center">One tmux sidebar that tracks every Claude Code, Codex, and OpenCode pane across every session and window. See status, background shells, prompts, Git state, activity, and worktrees without switching windows.</p>
+<p align="center">One rmux sidebar that tracks every Claude Code, Codex, and OpenCode pane across every session and window. See status, background shells, prompts, activity, wait reasons, task progress, and subagents without switching windows.</p>
 
 <p align="center"><img src="website/src/assets/captures/hero.png" alt="tmux-agent-sidebar hero" /></p>
 
@@ -13,40 +13,38 @@
 ## Features
 
 - **Every pane, one view** 
-  — tracks Claude Code, Codex, and OpenCode panes across all tmux sessions and windows
+  — tracks Claude Code, Codex, and OpenCode panes across all rmux sessions and windows
 - **Live metadata** 
   — prompts, tool calls, response previews, background shell state, wait reasons, task progress, and subagent trees refresh as the agents work
-- **Worktrees, included** 
-  — spawn a fresh worktree + agent from the sidebar and tear it down — window, worktree, and branch — in one keystroke
-- **Desktop notifications** 
-  — native alerts when an agent finishes, needs permission, or errors out
+- **Rmux API integration**
+  — all sidebar multiplexer operations go through rmux Rust APIs, including pane input via `Rmux::broadcast`
 
 OpenCode uses a small local plugin bridge instead of per-event hook config. The plugin lives at `.opencode/plugins/tmux-agent-sidebar.js` and can be symlinked as a single file into `~/.config/opencode/plugins/` so it coexists with any existing plugins.
 
 ## Requirements
 
-- tmux 3.0+
-- [TPM](https://github.com/tmux-plugins/tpm) (or the manual install in [Installation](https://hiroppy.github.io/tmux-agent-sidebar/getting-started/installation/))
-- [GitHub CLI](https://cli.github.com/) (optional — required only for PR numbers in the Git tab)
+- rmux 0.5+
 
 ## Quick Start
 
 ### 1. Install the plugin
 
-Using [TPM](https://github.com/tmux-plugins/tpm):
+Clone the plugin into rmux's plugin directory:
 
-```tmux
-set -g @plugin 'hiroppy/tmux-agent-sidebar'
+```sh
+mkdir -p ~/.rmux/plugins
+git clone https://github.com/hiroppy/tmux-agent-sidebar ~/.rmux/plugins/tmux-agent-sidebar
+~/.rmux/plugins/tmux-agent-sidebar/install-wizard.sh auto
 ```
 
-Reload tmux (`tmux source ~/.tmux.conf`), then press `prefix + I`. The install wizard downloads a pre-built binary or builds from source.
+The install wizard downloads a pre-built binary or builds from source, then registers rmux key bindings and hooks through the Rust rmux API.
 
 ### 2. Wire up the agent hooks
 
 - **Claude Code** — register the plugin inside Claude Code:
 
   ```sh
-  /plugin marketplace add ~/.tmux/plugins/tmux-agent-sidebar
+  /plugin marketplace add ~/.rmux/plugins/tmux-agent-sidebar
   /plugin install tmux-agent-sidebar@hiroppy
   ```
 
@@ -55,7 +53,7 @@ Reload tmux (`tmux source ~/.tmux.conf`), then press `prefix + I`. The install w
 
   ```sh
   mkdir -p ~/.config/opencode/plugins
-  ln -sf ~/.tmux/plugins/tmux-agent-sidebar/.opencode/plugins/tmux-agent-sidebar.js \
+  ln -sf ~/.rmux/plugins/tmux-agent-sidebar/.opencode/plugins/tmux-agent-sidebar.js \
     ~/.config/opencode/plugins/tmux-agent-sidebar.js
   ```
 
@@ -70,19 +68,19 @@ Full walkthroughs: [Claude Code setup](https://hiroppy.github.io/tmux-agent-side
 The [documentation site](https://hiroppy.github.io/tmux-agent-sidebar/) covers every feature and option:
 
 - [Agent pane breakdown](https://hiroppy.github.io/tmux-agent-sidebar/features/agent-pane/)
-- [Worktree lifecycle](https://hiroppy.github.io/tmux-agent-sidebar/features/worktree/)
-- [Activity log](https://hiroppy.github.io/tmux-agent-sidebar/features/activity-log/) · [Git tab](https://hiroppy.github.io/tmux-agent-sidebar/features/git-status/) · [Notifications](https://hiroppy.github.io/tmux-agent-sidebar/features/notifications/)
+- [Activity log](https://hiroppy.github.io/tmux-agent-sidebar/features/activity-log/)
 - [Agent support matrix](https://hiroppy.github.io/tmux-agent-sidebar/agents/)
-- [Keybindings](https://hiroppy.github.io/tmux-agent-sidebar/reference/keybindings/) · [tmux options](https://hiroppy.github.io/tmux-agent-sidebar/reference/tmux-options/) · [Scripting](https://hiroppy.github.io/tmux-agent-sidebar/reference/scripting/)
+- [Keybindings](https://hiroppy.github.io/tmux-agent-sidebar/reference/keybindings/) · [rmux options](https://hiroppy.github.io/tmux-agent-sidebar/reference/tmux-options/) · [Scripting](https://hiroppy.github.io/tmux-agent-sidebar/reference/scripting/)
 
 ## Development
 
 Symlink the plugin directory to your working copy so builds are picked up without copying:
 
 ```sh
-rm -rf ~/.tmux/plugins/tmux-agent-sidebar
-ln -s <path-to-this-repo> ~/.tmux/plugins/tmux-agent-sidebar
+rm -rf ~/.rmux/plugins/tmux-agent-sidebar
+ln -s <path-to-this-repo> ~/.rmux/plugins/tmux-agent-sidebar
 cargo build --release
+~/.rmux/plugins/tmux-agent-sidebar/tmux-agent-sidebar.tmux
 ```
 
 Toggle the sidebar off → on to pick up the new binary.
@@ -102,7 +100,7 @@ ln -s <path-to-this-repo> "$PLUGIN_CACHE"
 ```
 
 Also remove the stale release binary at `bin/tmux-agent-sidebar` in your repo
-if present — both the tmux launcher and `hook.sh` prefer `bin/` over
+if present — both the rmux launcher and `hook.sh` prefer `bin/` over
 `target/release/`, so a leftover binary there will mask `cargo build --release`
 output:
 

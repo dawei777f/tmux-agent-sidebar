@@ -102,7 +102,7 @@ fn capture_window_html(opts: &Opts) -> Result<String, String> {
 
     // Optional crop: --crop-rows START:END and/or --crop-cols START:END
     // (END is exclusive) trim the grid before rendering so scenarios
-    // can emit just the Activity/Git tab region, just a popup, etc.
+    // can emit just the activity region, just a popup, etc.
     if let Some((r0, r1)) = opts.crop_rows {
         let r0 = (r0 as usize).min(grid.len());
         let r1 = (r1 as usize).min(grid.len()).max(r0);
@@ -120,7 +120,7 @@ fn capture_window_html(opts: &Opts) -> Result<String, String> {
 }
 
 fn window_bounds(panes: &[tmux_probe::PaneGeom]) -> Result<(u16, u16), String> {
-    // Use checked_add so a malformed `tmux list-panes` row where
+    // Use checked_add so a malformed rmux pane geometry row where
     // left+width (or top+height) wraps past u16::MAX fails loudly
     // instead of silently wrapping to a tiny canvas.
     let mut cols: u16 = 0;

@@ -10,14 +10,11 @@ action="${1:-}"
 
 function finish {
     local exit_code=$?
-    # When run without arguments (interactive menu), the menu spawns a
-    # new-window with the action — that child process handles the reload.
     if [[ -z "$action" ]]; then
         exit $exit_code
     fi
     if [[ $exit_code -eq 0 ]]; then
-        echo "Reloading tmux.conf"
-        tmux source ~/.tmux.conf
+        "$BINARY" plugin-init "$BINARY" >/dev/null 2>&1 || true
         exit 0
     else
         echo "Something went wrong. Press any key to close this window."
@@ -52,12 +49,6 @@ function detect_platform() {
     echo "${os}-${arch}"
 }
 
-function stop_running_instances() {
-    # Kill any running instances so the next launch picks up the new binary.
-    # Match the full binary path to avoid touching unrelated processes.
-    pkill -f "$BINARY" 2>/dev/null || true
-}
-
 function post_install_fixups() {
     # macOS: strip provenance/quarantine xattrs and re-sign the binary so
     # Gatekeeper on Sequoia+ doesn't SIGKILL downloaded adhoc-signed binaries.
@@ -67,7 +58,8 @@ function post_install_fixups() {
         codesign --force --sign - "$BINARY" >/dev/null 2>&1 || true
     fi
 
-    stop_running_instances
+    # Running sidebar panes pick up this binary the next time they are toggled.
+    # Do not inspect or kill local processes from the installer.
 }
 
 function download_binary() {
@@ -122,26 +114,10 @@ case "$action" in
         build_from_source
         exit $?
         ;;
+    auto)
+        download_binary || build_from_source
+        exit $?
+        ;;
 esac
 
-# Interactive menu
-function get_message() {
-    if [[ "${SIDEBAR_UPDATE:-}" == "1" ]]; then
-        echo "tmux-agent-sidebar has been updated. We need to get the new binary."
-    else
-        echo "First time setup. We need to get the tmux-agent-sidebar binary."
-    fi
-}
-
-tmux display-menu -T "tmux-agent-sidebar" \
-    "" \
-    "- " "" "" \
-    "-  #[nodim,bold]tmux-agent-sidebar" "" "" \
-    "- " "" "" \
-    "-  $(get_message) " "" "" \
-    "- " "" "" \
-    "" \
-    "Download binary" d "new-window \"$PLUGIN_DIR/install-wizard.sh download-binary\"" \
-    "Build from source (Rust required)" s "new-window \"$PLUGIN_DIR/install-wizard.sh build-from-source\"" \
-    "" \
-    "Exit" q ""
+download_binary || build_from_source

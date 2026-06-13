@@ -1,4 +1,4 @@
-use super::commands::{display_message, run_tmux};
+use super::commands::{display_message, list_panes_formatted};
 
 pub fn get_sidebar_pane_info(tmux_pane: &str) -> (bool, bool, u16, u16) {
     let out = display_message(
@@ -23,18 +23,17 @@ pub fn get_pane_path(pane_id: &str) -> Option<String> {
     Some(display_message(pane_id, "#{pane_current_path}")).filter(|s| !s.is_empty())
 }
 
-/// Query tmux for all panes in the active window, returning (pane_id, pane_active, path).
-/// This queries tmux directly and is NOT filtered by agent type, so it includes
+/// Query rmux for all panes in the active window, returning (pane_id, pane_active, path).
+/// This queries rmux directly and is NOT filtered by agent type, so it includes
 /// all panes (shell, editor, etc.) — not just agent panes.
 pub fn query_active_window_panes() -> Vec<(String, bool, String)> {
-    // List panes in the current (active) window across all sessions
-    let output = match run_tmux(&[
-        "list-panes",
-        "-F",
+    let output = match list_panes_formatted(
+        None,
+        false,
         "#{pane_id}|#{pane_active}|#{pane_current_path}",
-    ]) {
-        Some(s) => s,
-        None => return vec![],
+    ) {
+        Ok(s) => s,
+        Err(_) => return vec![],
     };
     output
         .lines()
@@ -48,9 +47,9 @@ pub fn query_active_window_panes() -> Vec<(String, bool, String)> {
         .collect()
 }
 
-/// Find the focused (non-sidebar) pane ID and path by querying tmux directly.
-/// Returns all panes regardless of agent type, so activity/git info can be shown
-/// even for non-agent panes.
+/// Find the focused (non-sidebar) pane ID and path by querying rmux directly.
+/// Returns all panes regardless of agent type so focus tracking works even
+/// when the active pane has no agent running.
 pub fn find_active_pane(sidebar_pane: &str) -> Option<(String, String)> {
     pick_active_pane(sidebar_pane, &query_active_window_panes())
 }
@@ -70,10 +69,9 @@ pub(crate) fn pick_active_pane(
         .map(|p| (p.0.clone(), p.2.clone()))
 }
 
-/// Find the focused pane's working directory by querying tmux directly.
-/// Used by the background git thread which doesn't have access to AppState.
-/// Queries all panes (not just agent panes) so git info is available
-/// even when the focused pane has no agent running.
+/// Find the focused pane's working directory by querying rmux directly.
+/// Queries all panes (not just agent panes) so the current working directory
+/// is available even when the focused pane has no agent running.
 pub fn focused_pane_path(sidebar_pane: &str) -> Option<String> {
     find_active_pane(sidebar_pane).map(|(_, path)| path)
 }

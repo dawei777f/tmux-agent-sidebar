@@ -37,7 +37,7 @@ pub(super) fn render_frame(
     Ok(())
 }
 
-/// Write OSC 8 hyperlink escape sequences over already-rendered PR text.
+/// Write OSC 8 hyperlink escape sequences over already-rendered text.
 pub(super) fn write_hyperlink_overlays(
     backend: &mut CrosstermBackend<io::Stdout>,
     overlays: &[HyperlinkOverlay],

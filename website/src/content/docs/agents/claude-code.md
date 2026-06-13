@@ -27,15 +27,6 @@ Claude Code is the reference agent for the sidebar — every feature is wired th
 - Sub-agent tree — requires `SubagentStart` / `SubagentStop`
 - Activity log — every tool call recorded via `PostToolUse`
 
-### Git and worktrees
-
-- Branch display, updated dynamically via `CwdChanged`
-- PR number (needs `gh` CLI)
-
-### Notifications
-
-Every desktop notification event is available — `stop`, `notification`, `task_completed`, `stop_failure`, `permission_denied`. See [Notifications](/tmux-agent-sidebar/features/notifications/).
-
 ## Known limitation
 
 **Waiting status** — after you approve a permission prompt, the status stays `waiting` until the next hook event fires. This is a limitation of the Claude Code hook system.

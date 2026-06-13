@@ -10,7 +10,7 @@ use crate::tmux::{CLAUDE_AGENT, CODEX_AGENT};
 ///   plugin root resolved from the running binary so users with custom
 ///   install layouts get a working install path. If `current_exe()`
 ///   fails, the prompt still works because the plugin root falls back
-///   to the canonical TPM path.
+///   to the canonical rmux plugin path.
 /// - **Codex**: emits the legacy `setup codex` prompt because Codex CLI
 ///   has no plugin mechanism upstream. This branch genuinely needs the
 ///   running executable path, so it returns `None` if `current_exe()`
@@ -61,8 +61,8 @@ fn plugin_root_from_exe() -> Option<String> {
 
 /// Collapse an absolute path to a `~`-prefixed form when it lives
 /// under the user's home directory. Used to make the migration prompt
-/// portable across machines: `/Users/hiroppy/.tmux/plugins/...`
-/// renders as `~/.tmux/plugins/...` so a screenshot or copy-paste
+/// portable across machines: `/Users/hiroppy/.rmux/plugins/...`
+/// renders as `~/.rmux/plugins/...` so a screenshot or copy-paste
 /// from one user does not bake in another user's literal home path.
 fn tildify(path: &str) -> String {
     match std::env::var("HOME") {
@@ -90,12 +90,12 @@ fn tildify_with_home(path: &str, home: &str) -> String {
 /// the user can paste a runnable `/plugin marketplace add` command. The
 /// resolved path is tilde-collapsed when it lives under the user's home
 /// so the rendered command stays portable (and fits narrower sidebars).
-/// The fallback is the canonical TPM install path documented in the
+/// The fallback is the canonical rmux plugin install path documented in the
 /// README.
 fn build_claude_migration_prompt(plugin_root: Option<&str>) -> String {
     let marketplace_path = plugin_root
         .map(tildify)
-        .unwrap_or_else(|| "~/.tmux/plugins/tmux-agent-sidebar".to_string());
+        .unwrap_or_else(|| "~/.rmux/plugins/tmux-agent-sidebar".to_string());
     format!(
         "Migrate this user from the manual ~/.claude/settings.json setup to the \
          tmux-agent-sidebar Claude Code plugin:\n\
@@ -192,10 +192,10 @@ mod tests {
     #[test]
     fn build_claude_migration_prompt_falls_back_to_canonical_path() {
         // No plugin root resolved → fall back to the README-documented
-        // TPM install path so the pasted command is still runnable for
+        // rmux install path so the pasted command is still runnable for
         // the typical user.
         let prompt = build_claude_migration_prompt(None);
-        assert!(prompt.contains("~/.tmux/plugins/tmux-agent-sidebar"));
+        assert!(prompt.contains("~/.rmux/plugins/tmux-agent-sidebar"));
     }
 
     // ─── tildify_with_home ───────────────────────────────────────────
@@ -204,10 +204,10 @@ mod tests {
     fn tildify_collapses_paths_under_home_to_tilde() {
         assert_eq!(
             tildify_with_home(
-                "/Users/alice/.tmux/plugins/tmux-agent-sidebar",
+                "/Users/alice/.rmux/plugins/tmux-agent-sidebar",
                 "/Users/alice"
             ),
-            "~/.tmux/plugins/tmux-agent-sidebar"
+            "~/.rmux/plugins/tmux-agent-sidebar"
         );
     }
 

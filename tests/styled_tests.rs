@@ -151,7 +151,6 @@ fn snapshot_custom_theme_colors() {
         accent: Color::Indexed(196),       // red accent
         agent_claude: Color::Indexed(226), // yellow agent
         status_idle: Color::Indexed(46),   // green idle
-        port: Color::Indexed(39),          // cyan port
         ..ColorTheme::default()
     };
     // Unfocus sidebar so selected row doesn't use REVERSED (which hides colors)
@@ -176,7 +175,7 @@ fn test_theme_default_matches_shell_colors() {
 
     let theme = ColorTheme::default();
 
-    // Verify defaults match shell version's agent-sidebar.conf
+    // Verify defaults match the runtime theme seeded by Rust.
     assert_eq!(theme.accent, Color::Indexed(153));
     assert_eq!(theme.border_inactive, Color::Indexed(240));
     assert_eq!(theme.status_running, Color::Indexed(114));

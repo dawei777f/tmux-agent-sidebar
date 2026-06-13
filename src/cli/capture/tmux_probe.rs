@@ -1,6 +1,4 @@
-use std::process::Command;
-
-/// Per-pane geometry as emitted by `tmux list-panes -F`.
+/// Per-pane geometry as emitted by the multiplexer pane query format.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PaneGeom {
     pub pane_id: String,
@@ -35,52 +33,30 @@ impl PaneGeom {
     }
 }
 
-/// Query tmux for all panes in the given window.
+/// Query rmux for all panes in the given window.
 ///
 /// `window` is optional: if `None`, the session's currently active window is
 /// used, which sidesteps any user-specific `base-index` setting (some
 /// configurations start window numbering at 1 instead of 0).
 pub fn list_panes(session: &str, window: Option<&str>) -> Result<Vec<PaneGeom>, String> {
     let target = match window {
-        // Fully-qualified window id (e.g. `@3`) — tmux resolves it
+        // Fully-qualified window id (e.g. `@3`) resolves globally,
         // globally, so we skip the session prefix.
         Some(w) if w.starts_with('@') => w.to_string(),
         Some(w) => format!("{session}:{w}"),
         None => session.to_string(),
     };
-    let out = Command::new("tmux")
-        .args([
-            "list-panes",
-            "-t",
-            &target,
-            "-F",
-            "#{pane_id},#{pane_left},#{pane_top},#{pane_width},#{pane_height},#{pane_active}",
-        ])
-        .output()
-        .map_err(|e| format!("spawning tmux: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "tmux list-panes failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        ));
-    }
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stdout = crate::tmux::list_panes_formatted(
+        Some(&target),
+        false,
+        "#{pane_id},#{pane_left},#{pane_top},#{pane_width},#{pane_height},#{pane_active}",
+    )?;
     stdout.lines().map(PaneGeom::parse).collect()
 }
 
 /// Capture one pane as ANSI-coloured bytes via `capture-pane -p -e`.
 pub fn capture_pane(pane_id: &str) -> Result<Vec<u8>, String> {
-    let out = Command::new("tmux")
-        .args(["capture-pane", "-p", "-e", "-t", pane_id])
-        .output()
-        .map_err(|e| format!("spawning tmux: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "tmux capture-pane {pane_id} failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        ));
-    }
-    Ok(out.stdout)
+    crate::tmux::capture_pane_ansi(pane_id)
 }
 
 #[cfg(test)]

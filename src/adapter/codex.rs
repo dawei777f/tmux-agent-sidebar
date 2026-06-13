@@ -50,7 +50,6 @@ impl EventAdapter for CodexAdapter {
                 cwd: json_str(input, "cwd").into(),
                 permission_mode: json_str(input, "permission_mode").into(),
                 source: json_str(input, "source").into(),
-                worktree: None,
                 agent_id: None,
                 session_id: optional_str(input, "session_id"),
             }),
@@ -59,7 +58,6 @@ impl EventAdapter for CodexAdapter {
                 cwd: json_str(input, "cwd").into(),
                 permission_mode: json_str(input, "permission_mode").into(),
                 prompt: json_str(input, "prompt").into(),
-                worktree: None,
                 agent_id: None,
                 session_id: optional_str(input, "session_id"),
             }),
@@ -69,7 +67,6 @@ impl EventAdapter for CodexAdapter {
                 permission_mode: json_str(input, "permission_mode").into(),
                 last_message: json_str(input, "last_assistant_message").into(),
                 response: Some("{\"continue\":true}".into()),
-                worktree: None,
                 agent_id: None,
                 session_id: optional_str(input, "session_id"),
             }),
@@ -114,7 +111,6 @@ mod tests {
                 cwd: "/home/user".into(),
                 permission_mode: "".into(),
                 source: "".into(),
-                worktree: None,
                 agent_id: None,
                 session_id: Some("sess-codex-1".into()),
             }
@@ -140,7 +136,6 @@ mod tests {
                 cwd: "/tmp".into(),
                 permission_mode: "".into(),
                 prompt: "hello".into(),
-                worktree: None,
                 agent_id: None,
                 session_id: Some("sess-codex-2".into()),
             }
@@ -164,7 +159,6 @@ mod tests {
                 permission_mode: "".into(),
                 last_message: "done".into(),
                 response: Some("{\"continue\":true}".into()),
-                worktree: None,
                 agent_id: None,
                 session_id: Some("sess-codex-3".into()),
             }
@@ -269,7 +263,6 @@ mod tests {
                 permission_mode: "".into(),
                 last_message: "".into(),
                 response: Some("{\"continue\":true}".into()),
-                worktree: None,
                 agent_id: None,
                 session_id: None,
             }
@@ -296,15 +289,12 @@ mod tests {
     }
 
     #[test]
-    fn session_start_has_no_worktree() {
+    fn session_start_has_no_agent_id() {
         let event = CodexAdapter
             .parse("session-start", &json!({"cwd": "/tmp"}))
             .unwrap();
         match event {
-            AgentEvent::SessionStart {
-                worktree, agent_id, ..
-            } => {
-                assert!(worktree.is_none());
+            AgentEvent::SessionStart { agent_id, .. } => {
                 assert!(agent_id.is_none());
             }
             _ => panic!("wrong variant"),
@@ -338,16 +328,6 @@ mod tests {
     }
 
     #[test]
-    fn worktree_create_not_supported() {
-        assert!(CodexAdapter.parse("worktree-create", &json!({})).is_none());
-    }
-
-    #[test]
-    fn worktree_remove_not_supported() {
-        assert!(CodexAdapter.parse("worktree-remove", &json!({})).is_none());
-    }
-
-    #[test]
     fn session_start_missing_fields_default_to_empty() {
         let adapter = CodexAdapter;
         let event = adapter.parse("session-start", &json!({})).unwrap();
@@ -358,7 +338,6 @@ mod tests {
                 cwd: "".into(),
                 permission_mode: "".into(),
                 source: "".into(),
-                worktree: None,
                 agent_id: None,
                 session_id: None,
             }

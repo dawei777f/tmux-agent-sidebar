@@ -122,10 +122,8 @@ fn plugin_manifest_omits_redundant_hooks_field() {
 
 #[test]
 fn plugin_manifest_version_matches_cargo_toml() {
-    // Claude Code uses `plugin.json`'s `version` field for update detection
-    // (`/plugin update` and the marketplace cache compare against this).
-    // If we bump Cargo.toml without bumping plugin.json, marketplace users
-    // never see the new release. This test forces the two to stay in lockstep.
+    // Keep the package metadata coherent across the Rust binary and the
+    // Claude Code plugin manifest.
     let json = load_plugin_manifest();
     let plugin_version = json
         .get("version")

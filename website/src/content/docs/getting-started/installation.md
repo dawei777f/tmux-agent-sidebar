@@ -1,67 +1,62 @@
 ---
 title: Installation
-description: Install tmux-agent-sidebar via TPM or manually.
+description: Install tmux-agent-sidebar for rmux.
 ---
 
 ## Requirements
 
-- tmux 3.0+
-- [TPM](https://github.com/tmux-plugins/tpm) (for plugin installation)
-- [GitHub CLI](https://cli.github.com/) (optional, for displaying PR numbers in the Git tab)
+- rmux 0.5+
 - [Rust](https://rustup.rs/) (only if building from source)
 
-## Option A — TPM (recommended)
+## Option A — Plugin directory
 
-Add the plugin to your `tmux.conf`:
-
-```bash
-set -g @plugin 'hiroppy/tmux-agent-sidebar'
-```
-
-Reload `tmux.conf`, then press `prefix + I` to install:
+Clone the plugin into rmux's plugin directory:
 
 ```sh
-tmux source ~/.tmux.conf
+mkdir -p ~/.rmux/plugins
+git clone https://github.com/hiroppy/tmux-agent-sidebar.git \
+  ~/.rmux/plugins/tmux-agent-sidebar
 ```
 
-On the first run, an install wizard prompts you to download a pre-built binary or build from source.
+Run the installer once:
 
-To update later, press `prefix + U` in TPM's plugin list and select `tmux-agent-sidebar`. The install wizard runs again if the bundled binary has changed.
+```sh
+~/.rmux/plugins/tmux-agent-sidebar/install-wizard.sh auto
+```
 
-## Option B — Manual
+The installer downloads a pre-built binary or builds from source, then the launcher registers key bindings and hooks through rmux APIs.
+
+## Option B — Manual binary
 
 1. Clone the repository:
 
    ```sh
+   mkdir -p ~/.rmux/plugins
    git clone https://github.com/hiroppy/tmux-agent-sidebar.git \
-     ~/.tmux/plugins/tmux-agent-sidebar
+     ~/.rmux/plugins/tmux-agent-sidebar
    ```
 
-2. Add the plugin to your `tmux.conf`:
-
-   ```bash
-   run-shell ~/.tmux/plugins/tmux-agent-sidebar/tmux-agent-sidebar.tmux
-   ```
-
-3. Install the binary — download a pre-built release, or build from source:
+2. Install the binary — download a pre-built release, or build from source:
 
    ```sh
    # macOS (Apple Silicon)
    curl -fSL https://github.com/hiroppy/tmux-agent-sidebar/releases/latest/download/tmux-agent-sidebar-darwin-aarch64 \
-     -o ~/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar
-   chmod +x ~/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar
+     -o ~/.rmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar
+   chmod +x ~/.rmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar
    ```
 
    Or build from source:
 
    ```sh
-   cd ~/.tmux/plugins/tmux-agent-sidebar
+   cd ~/.rmux/plugins/tmux-agent-sidebar
    cargo build --release
    ```
 
-## Reload tmux config
+3. Load the bundled launcher from your rmux config or plugin manager.
 
-After editing `tmux.conf`, press `prefix + r` (or run `tmux source ~/.tmux.conf`) to reload.
+## Reload rmux config
+
+After editing your config, reload it through rmux.
 
 ## Next steps
 

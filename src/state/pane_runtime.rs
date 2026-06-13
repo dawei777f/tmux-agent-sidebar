@@ -6,8 +6,6 @@ use crate::activity::TaskProgress;
 /// Per-pane runtime state that should vanish together with the pane.
 #[derive(Debug, Clone, Default)]
 pub struct PaneRuntimeState {
-    pub ports: Vec<u16>,
-    pub command: Option<String>,
     pub task_progress: Option<TaskProgress>,
     pub task_dismissed_total: Option<usize>,
     pub inactive_since: Option<u64>,
@@ -65,22 +63,6 @@ impl AppState {
         self.pane_states.get(pane_id)
     }
 
-    pub fn set_pane_ports(&mut self, pane_id: &str, ports: Vec<u16>) {
-        self.pane_state_mut(pane_id).ports = ports;
-    }
-
-    pub fn pane_ports(&self, pane_id: &str) -> Option<&[u16]> {
-        self.pane_state(pane_id).map(|s| s.ports.as_slice())
-    }
-
-    pub fn set_pane_command(&mut self, pane_id: &str, command: Option<String>) {
-        self.pane_state_mut(pane_id).command = command;
-    }
-
-    pub fn pane_command(&self, pane_id: &str) -> Option<&str> {
-        self.pane_state(pane_id).and_then(|s| s.command.as_deref())
-    }
-
     pub fn set_pane_task_progress(&mut self, pane_id: &str, progress: Option<TaskProgress>) {
         self.pane_state_mut(pane_id).task_progress = progress;
     }
@@ -114,7 +96,7 @@ impl AppState {
     pub fn prune_pane_states_to_current_panes(&mut self) {
         let mut active_ids = HashSet::new();
         for group in &self.repo_groups {
-            for (pane, _) in &group.panes {
+            for pane in &group.panes {
                 active_ids.insert(pane.pane_id.clone());
             }
         }
@@ -144,8 +126,6 @@ mod tests {
     fn entry_mut_creates_default_on_miss() {
         let mut map = PaneRuntimeMap::new();
         let state = map.entry_mut("pane-1");
-        assert!(state.ports.is_empty());
-        assert!(state.command.is_none());
         assert!(state.task_progress.is_none());
         assert!(state.task_dismissed_total.is_none());
         assert!(state.inactive_since.is_none());
@@ -155,9 +135,9 @@ mod tests {
     #[test]
     fn entry_mut_returns_existing_entry() {
         let mut map = PaneRuntimeMap::new();
-        map.entry_mut("pane-1").ports = vec![8080];
+        map.entry_mut("pane-1").inactive_since = Some(8);
         let state = map.entry_mut("pane-1");
-        assert_eq!(state.ports, vec![8080]);
+        assert_eq!(state.inactive_since, Some(8));
     }
 
     #[test]
@@ -169,9 +149,9 @@ mod tests {
     #[test]
     fn get_returns_some_after_insertion() {
         let mut map = PaneRuntimeMap::new();
-        map.entry_mut("pane-1").ports = vec![3000];
+        map.entry_mut("pane-1").task_dismissed_total = Some(3);
         let state = map.get("pane-1").unwrap();
-        assert_eq!(state.ports, vec![3000]);
+        assert_eq!(state.task_dismissed_total, Some(3));
     }
 
     #[test]
@@ -179,11 +159,8 @@ mod tests {
         let mut map = PaneRuntimeMap::new();
         map.entry_mut("pane-1");
         let state = map.get_mut("pane-1").unwrap();
-        state.command = Some("cargo run".into());
-        assert_eq!(
-            map.get("pane-1").unwrap().command.as_deref(),
-            Some("cargo run")
-        );
+        state.inactive_since = Some(12);
+        assert_eq!(map.get("pane-1").unwrap().inactive_since, Some(12));
     }
 
     #[test]
@@ -203,9 +180,9 @@ mod tests {
     #[test]
     fn remove_returns_the_prior_value() {
         let mut map = PaneRuntimeMap::new();
-        map.entry_mut("pane-1").ports = vec![8080];
+        map.entry_mut("pane-1").task_dismissed_total = Some(9);
         let removed = map.remove("pane-1").unwrap();
-        assert_eq!(removed.ports, vec![8080]);
+        assert_eq!(removed.task_dismissed_total, Some(9));
         assert!(map.get("pane-1").is_none());
         assert!(!map.contains_key("pane-1"));
     }
@@ -225,8 +202,6 @@ mod tests {
         let mut state = AppState::new("%99".into());
         let pane_id = "%42";
 
-        state.set_pane_ports(pane_id, vec![3000]);
-        state.set_pane_command(pane_id, Some("pnpm dev".into()));
         state.set_pane_task_progress(
             pane_id,
             Some(TaskProgress {
@@ -236,8 +211,6 @@ mod tests {
         state.set_pane_task_dismissed_total(pane_id, Some(7));
         state.set_pane_inactive_since(pane_id, Some(42));
 
-        assert_eq!(state.pane_ports(pane_id), Some(&[3000][..]));
-        assert_eq!(state.pane_command(pane_id), Some("pnpm dev"));
         assert_eq!(
             state.pane_task_progress(pane_id).map(|p| p.total()),
             Some(1)
@@ -261,9 +234,6 @@ mod tests {
     fn setters_with_none_clear_previous_values() {
         let mut state = AppState::new("%99".into());
         let pane_id = "%1";
-        state.set_pane_command(pane_id, Some("old".into()));
-        state.set_pane_command(pane_id, None);
-        assert!(state.pane_command(pane_id).is_none());
 
         state.set_pane_task_dismissed_total(pane_id, Some(3));
         state.set_pane_task_dismissed_total(pane_id, None);

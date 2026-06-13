@@ -40,7 +40,7 @@ fn needs_animation(state: &crate::state::AppState) -> bool {
             .repo_groups
             .iter()
             .flat_map(|group| group.panes.iter())
-            .any(|(pane, _)| pane.status == crate::tmux::PaneStatus::Running)
+            .any(|pane| pane.status == crate::tmux::PaneStatus::Running)
 }
 
 fn next_poll_timeout(
@@ -93,7 +93,6 @@ pub fn run(
     let workers = workers::spawn(&state, initial_window_active);
     let workers::Workers {
         session_rx,
-        version_rx,
         sidebar_visible,
     } = workers;
 
@@ -179,11 +178,6 @@ pub fn run(
         if let Ok(names) = session_rx.try_recv() {
             state.sessions.names = names;
             state.sessions.dirty = true;
-            needs_redraw = true;
-        }
-
-        if let Ok(notice) = version_rx.try_recv() {
-            state.version_notice = Some(notice);
             needs_redraw = true;
         }
 

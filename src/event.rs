@@ -6,16 +6,6 @@ pub use kind::AgentEventKind;
 
 use serde_json::Value;
 
-/// Worktree metadata from Claude Code hook payloads.
-/// Present only when the agent is running in a worktree; `None` otherwise.
-#[derive(Debug, Clone, PartialEq)]
-pub struct WorktreeInfo {
-    pub name: String,
-    pub path: String,
-    pub branch: String,
-    pub original_repo_dir: String,
-}
-
 /// Internal event representation. All fields are pre-extracted by the adapter.
 /// The core handler never reads raw JSON or checks agent names.
 #[derive(Debug, Clone, PartialEq)]
@@ -25,7 +15,6 @@ pub enum AgentEvent {
         cwd: String,
         permission_mode: String,
         source: String,
-        worktree: Option<WorktreeInfo>,
         agent_id: Option<String>,
         session_id: Option<String>,
     },
@@ -37,7 +26,6 @@ pub enum AgentEvent {
         cwd: String,
         permission_mode: String,
         prompt: String,
-        worktree: Option<WorktreeInfo>,
         agent_id: Option<String>,
         session_id: Option<String>,
     },
@@ -50,7 +38,6 @@ pub enum AgentEvent {
         /// Used for events like idle_prompt that carry metadata but should not
         /// trigger a visible status change.
         meta_only: bool,
-        worktree: Option<WorktreeInfo>,
         agent_id: Option<String>,
         session_id: Option<String>,
     },
@@ -60,7 +47,6 @@ pub enum AgentEvent {
         permission_mode: String,
         last_message: String,
         response: Option<String>,
-        worktree: Option<WorktreeInfo>,
         agent_id: Option<String>,
         session_id: Option<String>,
     },
@@ -69,7 +55,6 @@ pub enum AgentEvent {
         cwd: String,
         permission_mode: String,
         error: String,
-        worktree: Option<WorktreeInfo>,
         agent_id: Option<String>,
         session_id: Option<String>,
     },
@@ -92,13 +77,11 @@ pub enum AgentEvent {
         agent: String,
         cwd: String,
         permission_mode: String,
-        worktree: Option<WorktreeInfo>,
         agent_id: Option<String>,
         session_id: Option<String>,
     },
     CwdChanged {
         cwd: String,
-        worktree: Option<WorktreeInfo>,
         agent_id: Option<String>,
         session_id: Option<String>,
     },
@@ -114,10 +97,6 @@ pub enum AgentEvent {
         teammate_name: String,
         team_name: String,
         idle_reason: String,
-    },
-    WorktreeCreate,
-    WorktreeRemove {
-        worktree_path: String,
     },
 }
 
@@ -139,8 +118,6 @@ impl AgentEvent {
             Self::TaskCreated { .. } => AgentEventKind::TaskCreated,
             Self::TaskCompleted { .. } => AgentEventKind::TaskCompleted,
             Self::TeammateIdle { .. } => AgentEventKind::TeammateIdle,
-            Self::WorktreeCreate => AgentEventKind::WorktreeCreate,
-            Self::WorktreeRemove { .. } => AgentEventKind::WorktreeRemove,
         }
     }
 }
@@ -150,53 +127,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn worktree_info_default_is_none() {
+    fn session_start_preserves_agent_and_session_ids() {
         let event = AgentEvent::SessionStart {
             agent: "claude".into(),
             cwd: "/tmp".into(),
             permission_mode: "default".into(),
             source: String::new(),
-            worktree: None,
             agent_id: None,
             session_id: None,
         };
         match event {
             AgentEvent::SessionStart {
-                worktree, agent_id, ..
+                agent_id,
+                session_id,
+                ..
             } => {
-                assert!(worktree.is_none());
                 assert!(agent_id.is_none());
+                assert!(session_id.is_none());
             }
             _ => panic!("wrong variant"),
         }
     }
 
     #[test]
-    fn worktree_info_with_values() {
-        let wt = WorktreeInfo {
-            name: "feat-branch".into(),
-            path: "/tmp/wt".into(),
-            branch: "feat".into(),
-            original_repo_dir: "/home/user/repo".into(),
+    fn task_completed_kind_round_trips() {
+        let event = AgentEvent::TaskCompleted {
+            task_id: "t1".into(),
+            task_subject: "ship".into(),
         };
-        let event = AgentEvent::SessionStart {
-            agent: "claude".into(),
-            cwd: "/tmp/wt".into(),
-            permission_mode: "default".into(),
-            source: String::new(),
-            worktree: Some(wt.clone()),
-            agent_id: Some("abc-123".into()),
-            session_id: None,
-        };
-        match event {
-            AgentEvent::SessionStart {
-                worktree, agent_id, ..
-            } => {
-                let wt = worktree.unwrap();
-                assert_eq!(wt.original_repo_dir, "/home/user/repo");
-                assert_eq!(agent_id.unwrap(), "abc-123");
-            }
-            _ => panic!("wrong variant"),
-        }
+        assert_eq!(event.kind(), AgentEventKind::TaskCompleted);
     }
 }

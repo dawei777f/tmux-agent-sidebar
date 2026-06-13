@@ -54,7 +54,7 @@ impl AppState {
         self.repo_groups
             .iter()
             .flat_map(|g| &g.panes)
-            .filter(|(p, _)| p.status == crate::tmux::PaneStatus::Running)
+            .filter(|p| p.status == crate::tmux::PaneStatus::Running)
             .count()
     }
 
@@ -210,8 +210,8 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::group::{PaneGitInfo, RepoGroup};
-    use crate::tmux::{AgentType, PaneInfo, PaneStatus, PermissionMode, WorktreeMetadata};
+    use crate::group::RepoGroup;
+    use crate::tmux::{AgentType, PaneInfo, PaneStatus, PermissionMode};
 
     fn test_pane(id: &str) -> PaneInfo {
         PaneInfo {
@@ -229,10 +229,8 @@ mod tests {
             permission_mode: PermissionMode::Default,
             subagents: vec![],
             pane_pid: None,
-            worktree: WorktreeMetadata::default(),
             session_id: None,
             session_name: String::new(),
-            sidebar_spawned: false,
             bg_shell_cmd: None,
         }
     }
@@ -270,7 +268,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "repo".into(),
             has_focus: false,
-            panes: vec![(pane, PaneGitInfo::default())],
+            panes: vec![pane],
         }];
         state.tick_pet(60);
         assert!(matches!(
@@ -288,7 +286,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "repo".into(),
             has_focus: false,
-            panes: vec![(pane, PaneGitInfo::default())],
+            panes: vec![pane],
         }];
         let panel_width = 60u16;
         let working_width = crate::ui::pet::CHAIR_WIDTH + 3;
@@ -309,7 +307,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "repo".into(),
             has_focus: false,
-            panes: vec![(pane, PaneGitInfo::default())],
+            panes: vec![pane],
         }];
         state.pet_state = crate::ui::pet::PetState::WalkRight;
         state.pet_x = 20;
@@ -328,7 +326,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "repo".into(),
             has_focus: false,
-            panes: vec![(pane, PaneGitInfo::default())],
+            panes: vec![pane],
         }];
         state.pet_state = crate::ui::pet::PetState::WalkRight;
         state.pet_x = 20;
@@ -351,7 +349,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "repo".into(),
             has_focus: false,
-            panes: vec![(pane, PaneGitInfo::default())],
+            panes: vec![pane],
         }];
         state.pet_state = crate::ui::pet::PetState::Working;
         state.pet_x = 40;
@@ -370,7 +368,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "repo".into(),
             has_focus: false,
-            panes: vec![(pane, PaneGitInfo::default())],
+            panes: vec![pane],
         }];
         state.pet_state = crate::ui::pet::PetState::Working;
         state.pet_x = 40;
@@ -391,7 +389,7 @@ mod tests {
         state.repo_groups = vec![RepoGroup {
             name: "repo".into(),
             has_focus: false,
-            panes: vec![(pane, PaneGitInfo::default())],
+            panes: vec![pane],
         }];
         state.pet_state = crate::ui::pet::PetState::WalkLeft;
         state.pet_x = 20;

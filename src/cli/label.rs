@@ -50,8 +50,6 @@ const STRATEGY_TABLE: &[(CanonicalTool, LabelStrategy)] = &[
     (CanonicalTool::Lsp, LabelStrategy::Field("operation")),
     (CanonicalTool::CronCreate, LabelStrategy::Field("cron")),
     (CanonicalTool::CronDelete, LabelStrategy::Field("id")),
-    (CanonicalTool::EnterWorktree, LabelStrategy::Field("name")),
-    (CanonicalTool::ExitWorktree, LabelStrategy::Field("name")),
     (CanonicalTool::Agent, LabelStrategy::Custom(label_agent)),
     (
         CanonicalTool::TaskCreate,
@@ -552,29 +550,11 @@ mod tests {
     }
 
     #[test]
-    fn label_enter_worktree() {
-        let input = json!({"name": "feature-branch"});
-        assert_eq!(
-            extract_tool_label("EnterWorktree", &input, &json!(null)),
-            "feature-branch"
-        );
-    }
-
-    #[test]
     fn label_powershell_extracts_command() {
         let input = json!({"command": "Get-Process"});
         assert_eq!(
             extract_tool_label("PowerShell", &input, &json!(null)),
             "Get-Process"
-        );
-    }
-
-    #[test]
-    fn label_exit_worktree() {
-        let input = json!({"name": "feature-branch"});
-        assert_eq!(
-            extract_tool_label("ExitWorktree", &input, &json!(null)),
-            "feature-branch"
         );
     }
 
@@ -601,14 +581,6 @@ mod tests {
         assert_eq!(
             extract_tool_label("PushNotification", &input, &json!(null)),
             "Deploy finished"
-        );
-    }
-
-    #[test]
-    fn label_exit_worktree_empty_name() {
-        assert_eq!(
-            extract_tool_label("ExitWorktree", &json!({}), &json!(null)),
-            ""
         );
     }
 

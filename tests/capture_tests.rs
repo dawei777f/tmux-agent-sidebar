@@ -192,46 +192,22 @@ fn render_html_emits_pre_with_per_cell_spans() {
 }
 
 #[test]
-#[ignore = "requires local tmux"]
+#[ignore = "requires local rmux"]
 fn capture_frames_sequence_integration() {
-    use std::process::Command;
     use tmux_agent_sidebar::cli;
 
-    // Run every `tmux` invocation on an isolated server so the test can't
-    // touch the user's live tmux (it would otherwise steal focus and
-    // create a `cap-seq` session on their daily driver).
-    let tmux_root = tempfile::tempdir().unwrap();
-    // SAFETY: this #[ignore]-d integration test runs single-threaded per
-    // `cargo test -- --ignored --test-threads=1` (see the comment on
-    // `cleanup` below); all `Command::new("tmux")` calls below inherit
-    // this env so they land on the throwaway server.
-    unsafe {
-        std::env::set_var("TMUX_TMPDIR", tmux_root.path());
-        std::env::remove_var("TMUX");
-        std::env::remove_var("TMUX_PANE");
-    }
+    let session = unique_session_name("cap-seq");
+    create_capture_session(&session);
+    let _cleanup = scopeguard::guard(session.clone(), |session| kill_capture_session(&session));
 
-    Command::new("tmux")
-        .args(["new-session", "-d", "-s", "cap-seq", "-x", "40", "-y", "10"])
-        .status()
-        .expect("tmux new-session");
-    let _cleanup = scopeguard::guard((), |_| {
-        // `kill-server` (not just kill-session) so the isolated server
-        // exits cleanly when the temp dir drops.
-        let _ = Command::new("tmux").args(["kill-server"]).status();
-    });
-
-    Command::new("tmux")
-        .args(["send-keys", "-t", "cap-seq", "printf 'hi\\n'", "Enter"])
-        .status()
-        .ok();
+    send_text_to_session(&session, "printf 'hi\\n'");
     std::thread::sleep(std::time::Duration::from_millis(100));
 
     let tmp = tempfile::tempdir().unwrap();
     let code = cli::run(&[
         "capture".into(),
         "--session".into(),
-        "cap-seq".into(),
+        session.clone(),
         "--frames-out".into(),
         tmp.path().to_string_lossy().into(),
         "--duration-ms".into(),
@@ -255,38 +231,15 @@ fn capture_frames_sequence_integration() {
 }
 
 #[test]
-#[ignore = "requires local tmux"]
+#[ignore = "requires local rmux"]
 fn capture_single_frame_integration() {
-    use std::process::Command;
     use tmux_agent_sidebar::cli;
 
-    // Same isolation as capture_frames_sequence_integration — don't
-    // touch the user's live tmux server.
-    let tmux_root = tempfile::tempdir().unwrap();
-    unsafe {
-        std::env::set_var("TMUX_TMPDIR", tmux_root.path());
-        std::env::remove_var("TMUX");
-        std::env::remove_var("TMUX_PANE");
-    }
+    let session = unique_session_name("cap-it");
+    create_capture_session(&session);
+    let _cleanup = scopeguard::guard(session.clone(), |session| kill_capture_session(&session));
 
-    Command::new("tmux")
-        .args(["new-session", "-d", "-s", "cap-it", "-x", "40", "-y", "10"])
-        .status()
-        .expect("tmux new-session");
-    let _cleanup = scopeguard::guard((), |_| {
-        let _ = Command::new("tmux").args(["kill-server"]).status();
-    });
-
-    Command::new("tmux")
-        .args([
-            "send-keys",
-            "-t",
-            "cap-it",
-            "printf '\\033[38;5;117mhi\\n'",
-            "Enter",
-        ])
-        .status()
-        .ok();
+    send_text_to_session(&session, "printf '\\033[38;5;117mhi\\n'");
     std::thread::sleep(std::time::Duration::from_millis(200));
 
     let tmp = tempfile::tempdir().unwrap();
@@ -296,7 +249,7 @@ fn capture_single_frame_integration() {
     let code = cli::run(&[
         "capture".into(),
         "--session".into(),
-        "cap-it".into(),
+        session,
         "--frame-out".into(),
         out.to_string_lossy().into(),
     ])
@@ -304,4 +257,96 @@ fn capture_single_frame_integration() {
     assert_eq!(code, 0);
     let html = std::fs::read_to_string(&out).unwrap();
     assert!(html.contains("<pre"));
+}
+
+fn unique_session_name(prefix: &str) -> String {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock should be after unix epoch")
+        .as_millis();
+    format!("{prefix}-{}-{millis}", std::process::id())
+}
+
+fn create_capture_session(session: &str) {
+    let mut conn = rmux_connection();
+    let session_name = rmux_proto::SessionName::new(session).expect("valid session name");
+    let response = conn
+        .new_session(
+            session_name,
+            true,
+            Some(rmux_proto::TerminalSize { cols: 40, rows: 10 }),
+        )
+        .expect("create rmux session");
+    match response {
+        rmux_proto::Response::NewSession(_) => {}
+        rmux_proto::Response::Error(error) => panic!("new-session failed: {}", error.error),
+        other => panic!("new-session returned {}", other.command_name()),
+    }
+}
+
+fn kill_capture_session(session: &str) {
+    let Some(session_name) = rmux_proto::SessionName::new(session).ok() else {
+        return;
+    };
+    if let Ok(mut conn) = try_rmux_connection() {
+        let _ = conn.kill_session(rmux_proto::KillSessionRequest {
+            target: session_name,
+            kill_all_except_target: false,
+            clear_alerts: false,
+        });
+    }
+}
+
+fn send_text_to_session(session: &str, text: &str) {
+    let pane_id =
+        tmux_agent_sidebar::tmux::list_panes_formatted(Some(session), false, "#{pane_id}")
+            .expect("list rmux panes")
+            .lines()
+            .next()
+            .and_then(|pane| pane.trim().strip_prefix('%'))
+            .and_then(|pane| pane.parse::<u32>().ok())
+            .expect("parse first pane id");
+    let session = rmux_proto::SessionName::new(session).expect("valid session name");
+    tokio_runtime().block_on(async move {
+        let rmux = rmux_sdk::Rmux::builder()
+            .default_timeout(std::time::Duration::from_secs(5))
+            .connect()
+            .await
+            .expect("connect rmux sdk");
+        let pane = rmux
+            .pane_by_id(session, rmux_proto::PaneId::new(pane_id))
+            .await
+            .expect("resolve rmux pane by id");
+        rmux.broadcast(std::slice::from_ref(&pane), rmux_sdk::Input::Text(text))
+            .await
+            .expect("broadcast text");
+        rmux.broadcast(std::slice::from_ref(&pane), rmux_sdk::Input::Key("Enter"))
+            .await
+            .expect("broadcast enter");
+    });
+}
+
+fn rmux_connection() -> rmux_client::Connection {
+    try_rmux_connection().expect("connect to rmux server")
+}
+
+fn try_rmux_connection() -> Result<rmux_client::Connection, String> {
+    let socket_path =
+        rmux_client::resolve_socket_path(None, None).map_err(|err| err.to_string())?;
+    rmux_client::Connection::start_server(
+        &socket_path,
+        false,
+        rmux_client::AutoStartConfig::disabled(),
+    )
+    .map_err(|err| format!("{err:?}"))
+}
+
+fn tokio_runtime() -> &'static tokio::runtime::Runtime {
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build tokio runtime")
+    })
 }

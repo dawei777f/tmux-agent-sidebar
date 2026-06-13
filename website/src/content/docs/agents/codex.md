@@ -14,19 +14,10 @@ Codex exposes a smaller hook set than Claude Code, so some sidebar features are 
 - Response preview (`▷ …`) from `Stop`
 - Elapsed time since the last prompt
 
-### Git
-
-- Branch display from the pane's `cwd`
-- PR number (needs `gh` CLI)
-
 ### Permission badges
 
 - `auto` and `!` — inferred from process arguments
 - `plan` / `edit` are **not** available on Codex
-
-### Notifications
-
-- `stop` only — fires when the assistant finishes responding.
 
 ### Activity log
 
@@ -41,8 +32,6 @@ Codex exposes a smaller hook set than Claude Code, so some sidebar features are 
 | API failure reason                        | Needs `StopFailure` (Claude-only)                                    |
 | Task progress counter                     | Needs non-Bash `PostToolUse` coverage                                |
 | Sub-agent tree                            | Needs `SubagentStart` / `SubagentStop`                               |
-| Worktree lifecycle tracking               | Needs `WorktreeCreate` / `WorktreeRemove`                            |
-| `notification` / `task_completed` / `stop_failure` / `permission_denied` notifications | Those hooks don't exist in Codex                                     |
 
 ## Setup
 
